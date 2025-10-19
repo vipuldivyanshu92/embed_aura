@@ -78,9 +78,11 @@ class LocalSLM(SLMClient):
         """
         Generate hypotheses using pattern matching and context (multi-modal support).
 
+        OPTIMIZED: Now receives context with semantically relevant memories.
+
         Args:
             user_input: User's text input
-            context: Context dict with 'persona_facets', 'recent_goals', etc.
+            context: Context dict with 'persona_facets', 'relevant_goals', 'relevant_preferences', etc.
             count: Number of hypotheses (max 3)
             media_type: Type of media (text, image, audio, video)
             media_url: URL to media file
@@ -130,7 +132,7 @@ class LocalSLM(SLMClient):
         return hypotheses[:count]
 
     def _adjust_confidence(self, base_conf: float, context: dict[str, Any], idx: int) -> float:
-        """Adjust confidence based on persona and context."""
+        """Adjust confidence based on persona and relevant context."""
         facets = context.get("persona_facets", {})
 
         # Apply small adjustments based on facets
@@ -143,6 +145,11 @@ class LocalSLM(SLMClient):
         # If user is code-first, slightly adjust for code-related hypotheses
         if facets.get("code_first", 0.5) > 0.7:
             adjustment += 0.02
+
+        # OPTIMIZED: Boost confidence if we have relevant past context
+        if context.get("similar_history") or context.get("relevant_goals"):
+            # User has done similar things before - increase confidence
+            adjustment += 0.05
 
         # Clamp to [0, 1]
         return max(0.0, min(1.0, base_conf + adjustment))

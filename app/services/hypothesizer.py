@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.memory.base import MemoryProvider
 from app.models import Hypothesis, MediaType, MemoryType
 from app.services.persona import PersonaService
+from app.utils.embeddings import generate_embedding
 
 logger = structlog.get_logger()
 
@@ -61,7 +62,7 @@ class HypothesizerService:
             Tuple of (hypotheses list, auto_advance flag)
         """
         # Limit to max 3
-        count = min(count, 3)
+        count = min(count, 4)
 
         # Get context
         context = await self._build_context(
@@ -100,8 +101,8 @@ class HypothesizerService:
         """
         Build context for hypothesis generation (multi-modal support).
 
-        Retrieves top-K memories of types: GOAL, PREFERENCE, STYLE
-        and user persona facets.
+        OPTIMIZED: Uses semantic search to find the most RELEVANT memories
+        based on the current input, not just the most recent ones.
 
         Args:
             user_id: User identifier
@@ -111,27 +112,93 @@ class HypothesizerService:
             media_base64: Base64 encoded media
 
         Returns:
-            Context dictionary
+            Context dictionary with relevant memories
         """
         # Get persona
         persona = await self.persona_service.get_or_create_persona(user_id)
 
-        # Get relevant memories
-        goals = await self.memory_provider.get_memories(user_id, MemoryType.GOAL, limit=3)
-        preferences = await self.memory_provider.get_memories(
-            user_id, MemoryType.PREFERENCE, limit=5
+        # Generate embedding for semantic search
+        query_embedding = generate_embedding(
+            text=input_text,
+            media_type=media_type,
+            media_url=media_url,
+            media_base64=media_base64,
         )
-        styles = await self.memory_provider.get_memories(user_id, MemoryType.STYLE, limit=3)
 
+        # Use semantic search to find RELEVANT memories (not just recent)
+        relevant_memories = await self.memory_provider.search_memories(
+            user_id,
+            query_embedding,
+            limit=20,  # Get top 20 most relevant memories
+        )
+
+        # Categorize memories by type for better context building
+        goals = []
+        preferences = []
+        styles = []
+        history = []
+        artifacts = []
+
+        for memory in relevant_memories:
+            if memory.mtype == MemoryType.GOAL:
+                goals.append(memory)
+            elif memory.mtype == MemoryType.PREFERENCE:
+                preferences.append(memory)
+            elif memory.mtype == MemoryType.STYLE:
+                styles.append(memory)
+            elif memory.mtype == MemoryType.HISTORY:
+                history.append(memory)
+            elif memory.mtype == MemoryType.ARTIFACT:
+                artifacts.append(memory)
+
+        # Build enriched context with relevant memories
         context = {
             "persona_facets": persona.facets,
             "interaction_count": persona.interaction_count,
-            "recent_goals": [m.content or m.media_description for m in goals if m.content or m.media_description],
-            "preferences": [m.content or m.media_description for m in preferences if m.content or m.media_description],
-            "styles": [m.content or m.media_description for m in styles if m.content or m.media_description],
+            # Most relevant goals (semantically similar to current input)
+            "relevant_goals": [
+                m.content or m.media_description 
+                for m in goals[:3] 
+                if m.content or m.media_description
+            ],
+            # Most relevant preferences
+            "relevant_preferences": [
+                m.content or m.media_description 
+                for m in preferences[:5] 
+                if m.content or m.media_description
+            ],
+            # Style preferences
+            "styles": [
+                m.content or m.media_description 
+                for m in styles[:3] 
+                if m.content or m.media_description
+            ],
+            # Similar past interactions (helps understand patterns)
+            "similar_history": [
+                m.content or m.media_description 
+                for m in history[:3] 
+                if m.content or m.media_description
+            ],
+            # Relevant artifacts (code snippets, documents, etc.)
+            "relevant_artifacts": [
+                m.content or m.media_description 
+                for m in artifacts[:2] 
+                if m.content or m.media_description
+            ],
             "media_type": media_type.value,
             "has_media": media_url is not None or media_base64 is not None,
+            "total_relevant_memories": len(relevant_memories),
         }
+
+        logger.debug(
+            "hypothesis_context_built",
+            user_id=user_id,
+            goals=len(goals),
+            preferences=len(preferences),
+            history=len(history),
+            artifacts=len(artifacts),
+            total_memories=len(relevant_memories),
+        )
 
         return context
 

@@ -1,4 +1,4 @@
-"""Multi-modal embedding generation with CLIP/fallback support."""
+"""Multi-modal embedding generation with Ollama/CLIP/fallback support."""
 
 import base64
 import hashlib
@@ -17,6 +17,7 @@ logger = structlog.get_logger()
 _clip_model = None
 _clip_processor = None
 _sentence_transformer = None
+_ollama_client = None
 
 
 def _get_clip_model() -> tuple[Any, Any]:
@@ -68,6 +69,33 @@ def _get_sentence_transformer() -> Any:
             _sentence_transformer = None
 
     return _sentence_transformer
+
+
+def _get_ollama_client() -> Any:
+    """Lazy load Ollama client for image descriptions and embeddings."""
+    global _ollama_client
+
+    if _ollama_client is None:
+        try:
+            from app.clients.slm.ollama import OllamaClient
+
+            settings = get_settings()
+            logger.info(
+                "loading_ollama_client",
+                base_url=settings.ollama_base_url,
+                model=settings.ollama_model_name,
+            )
+            _ollama_client = OllamaClient(
+                base_url=settings.ollama_base_url,
+                model_name=settings.ollama_model_name,
+                timeout=settings.ollama_timeout,
+            )
+            logger.info("ollama_client_loaded")
+        except Exception as e:
+            logger.error("ollama_client_load_failed", error=str(e))
+            _ollama_client = None
+
+    return _ollama_client
 
 
 def _hash_based_embedding(content: str, dims: int = 384) -> list[float]:

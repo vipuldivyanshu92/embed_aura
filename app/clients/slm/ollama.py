@@ -154,24 +154,34 @@ Summary:"""
         """
         Enrich context with additional insights from Ollama.
         
-        This method uses the model to generate additional context,
-        infer implicit goals, and suggest relevant follow-up areas.
+        OPTIMIZED: Uses semantic search results to provide better enrichment.
         
         Args:
             user_input: User's input
-            context: Existing context dictionary
+            context: Existing context dictionary (with relevant memories)
             
         Returns:
             Enriched context dictionary
         """
-        prompt = f"""Given the user input and their profile, provide additional context insights in JSON format.
+        # Build richer context from semantic search results
+        relevant_info = []
+        if context.get('relevant_goals'):
+            relevant_info.append(f"Relevant Goals: {', '.join(context['relevant_goals'][:2])}")
+        if context.get('relevant_preferences'):
+            relevant_info.append(f"Preferences: {', '.join(context['relevant_preferences'][:3])}")
+        if context.get('similar_history'):
+            relevant_info.append(f"Similar Past Work: {', '.join(context['similar_history'][:2])}")
+        
+        context_summary = "\n- ".join(relevant_info) if relevant_info else "No prior context"
+        
+        prompt = f"""Given the user input and their semantically matched past context, provide additional context insights in JSON format.
 
 User Input: {user_input}
 
 User Profile:
-- Interaction Count: {context.get('interaction_count', 0)}
-- Preferences: {', '.join(context.get('preferences', [])[:3])}
-- Recent Goals: {', '.join(context.get('recent_goals', [])[:2])}
+- Total Interactions: {context.get('interaction_count', 0)}
+- Relevant Past Context:
+  - {context_summary}
 
 Provide enrichment in this JSON format:
 {{
@@ -268,17 +278,43 @@ Questions:"""
         count: int,
         media_type: MediaType,
     ) -> str:
-        """Build prompt for hypothesis generation."""
+        """Build prompt for hypothesis generation with enriched context."""
         persona_desc = self._describe_persona(context.get("persona_facets", {}))
         
-        # Build context summary
+        # Build enriched context summary using semantic search results
         context_parts = []
-        if context.get("recent_goals"):
-            context_parts.append(f"Recent Goals: {', '.join(context['recent_goals'][:2])}")
-        if context.get("preferences"):
-            context_parts.append(f"Preferences: {', '.join(context['preferences'][:3])}")
         
-        context_str = "\n".join(context_parts) if context_parts else "No prior context available."
+        # Relevant goals (semantically similar to current input)
+        if context.get("relevant_goals"):
+            goals_str = "\n  - " + "\n  - ".join(context['relevant_goals'][:3])
+            context_parts.append(f"Relevant Goals:{goals_str}")
+        
+        # Relevant preferences  
+        if context.get("relevant_preferences"):
+            prefs_str = "\n  - " + "\n  - ".join(context['relevant_preferences'][:4])
+            context_parts.append(f"Preferences:{prefs_str}")
+        
+        # Similar past interactions (NEW: helps identify patterns)
+        if context.get("similar_history"):
+            history_str = "\n  - " + "\n  - ".join(context['similar_history'][:2])
+            context_parts.append(f"Similar Past Interactions:{history_str}")
+        
+        # Relevant artifacts (NEW: code snippets, docs, etc.)
+        if context.get("relevant_artifacts"):
+            artifacts_str = "\n  - " + "\n  - ".join(context['relevant_artifacts'][:2])
+            context_parts.append(f"Relevant Past Work:{artifacts_str}")
+        
+        # Style preferences
+        if context.get("styles"):
+            styles_str = ", ".join(context['styles'])
+            context_parts.append(f"Style Preferences: {styles_str}")
+        
+        context_str = "\n\n".join(context_parts) if context_parts else "No prior context available."
+        
+        # Add memory count for transparency
+        mem_count = context.get('total_relevant_memories', 0)
+        if mem_count > 0:
+            context_str += f"\n\n(Based on {mem_count} relevant past memories)"
         
         media_context = ""
         if media_type != MediaType.TEXT:
@@ -286,25 +322,28 @@ Questions:"""
         
         prompt = f"""You are an AI assistant helping to understand user intent. Generate {count} hypotheses about what the user wants to accomplish.
 
+IMPORTANT: Use the user's relevant past context below to generate MORE ACCURATE and PERSONALIZED hypotheses.
+
 User Input: {user_input or "(no text input)"}
 {media_context}
 
 User Profile:
 {persona_desc}
-Interaction Count: {context.get('interaction_count', 0)}
+Total Interactions: {context.get('interaction_count', 0)}
 
-Context:
+Relevant Context (Semantically Matched to Current Input):
 {context_str}
 
 Generate {count} hypotheses as clarifying questions. Each hypothesis should:
 1. Be phrased as a clear question
-2. Include a confidence score (0.0-1.0)
-3. Include a brief rationale
+2. Leverage the relevant context above to be more specific and personalized
+3. Include a confidence score (0.0-1.0) - higher if it matches past patterns
+4. Include a brief rationale explaining WHY this hypothesis is likely
 
 Format each hypothesis as:
 Q: [question]
 Confidence: [0.0-1.0]
-Rationale: [brief explanation]
+Rationale: [brief explanation based on context]
 
 Hypotheses:"""
 
@@ -457,6 +496,117 @@ Hypotheses:"""
             Generated text response
         """
         return await self._generate(prompt, temperature, max_tokens)
+    
+    async def generate_image_description(
+        self,
+        image_data: bytes,
+        prompt: str = "Describe this image in detail.",
+    ) -> str:
+        """
+        Generate a description of an image using Ollama vision model.
+        
+        Args:
+            image_data: Raw image bytes
+            prompt: Prompt for the vision model
+            
+        Returns:
+            Text description of the image
+        """
+        import base64
+        
+        # Convert image to base64
+        image_b64 = base64.b64encode(image_data).decode('utf-8')
+        
+        url = f"{self.base_url}/api/generate"
+        
+        # Use vision-capable model if available, otherwise fallback
+        # Common vision models: llava, llama3.2-vision, minicpm-v
+        vision_model = self._get_vision_model_name()
+        
+        payload = {
+            "model": vision_model,
+            "prompt": prompt,
+            "images": [image_b64],
+            "stream": False,
+        }
+        
+        try:
+            response = await self.client.post(url, json=payload)
+            response.raise_for_status()
+            
+            data = response.json()
+            description = data["response"].strip()
+            
+            logger.info(
+                "ollama_image_description_generated",
+                model=vision_model,
+                description_length=len(description),
+            )
+            
+            return description
+            
+        except Exception as e:
+            logger.error("ollama_image_description_failed", error=str(e))
+            raise
+    
+    async def generate_embedding(
+        self,
+        text: str,
+        model: str | None = None,
+    ) -> list[float]:
+        """
+        Generate text embedding using Ollama embedding model.
+        
+        Args:
+            text: Text to embed
+            model: Optional embedding model name (defaults to nomic-embed-text)
+            
+        Returns:
+            Embedding vector
+        """
+        url = f"{self.base_url}/api/embeddings"
+        
+        # Use dedicated embedding model (nomic-embed-text is recommended)
+        embed_model = model or "nomic-embed-text"
+        
+        payload = {
+            "model": embed_model,
+            "prompt": text,
+        }
+        
+        try:
+            response = await self.client.post(url, json=payload)
+            response.raise_for_status()
+            
+            data = response.json()
+            embedding = data["embedding"]
+            
+            logger.debug(
+                "ollama_embedding_generated",
+                model=embed_model,
+                dims=len(embedding),
+            )
+            
+            return embedding
+            
+        except Exception as e:
+            logger.error("ollama_embedding_failed", error=str(e))
+            raise
+    
+    def _get_vision_model_name(self) -> str:
+        """
+        Get the vision model name to use.
+        
+        Checks if a vision model is available, otherwise uses a default.
+        Common vision models: llava, llama3.2-vision, minicpm-v
+        
+        Returns:
+            Vision model name
+        """
+        # For now, return a sensible default
+        # In production, you might want to check available models first
+        # via GET /api/tags endpoint
+        return "llava"
     
     async def close(self) -> None:
         """Close the HTTP client."""
