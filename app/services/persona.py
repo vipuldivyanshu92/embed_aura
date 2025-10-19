@@ -9,6 +9,7 @@ import structlog
 from app.config import get_settings
 from app.memory.base import MemoryProvider
 from app.models import Persona
+from app.clients.slm.base import SLMClient
 
 logger = structlog.get_logger()
 
@@ -29,14 +30,20 @@ class PersonaService:
         "step_by_step": 0.5,
     }
 
-    def __init__(self, memory_provider: MemoryProvider) -> None:
+    def __init__(
+        self, 
+        memory_provider: MemoryProvider,
+        slm_client: SLMClient | None = None,
+    ) -> None:
         """
         Initialize persona service.
 
         Args:
             memory_provider: Memory provider for persona storage
+            slm_client: Optional SLM client for enhanced learning (vLLM)
         """
         self.memory_provider = memory_provider
+        self.slm_client = slm_client
         self.settings = get_settings()
 
     async def get_or_create_persona(self, user_id: str) -> Persona:
@@ -106,7 +113,7 @@ class PersonaService:
             )
 
         # Update facets based on signals
-        facet_updates = self._compute_facet_updates(signals)
+        facet_updates = await self._compute_facet_updates(signals)
         for facet, delta in facet_updates.items():
             if facet in persona.facets:
                 new_value = persona.facets[facet] + delta
@@ -158,12 +165,12 @@ class PersonaService:
 
         return updated.tolist()
 
-    def _compute_facet_updates(self, signals: dict[str, Any]) -> dict[str, float]:
+    async def _compute_facet_updates(self, signals: dict[str, Any]) -> dict[str, float]:
         """
-        Compute facet updates based on signals (linear probe heuristic).
+        Compute facet updates based on signals.
 
-        This is a simple heuristic model. In production, this could be
-        replaced with a learned model.
+        Uses vLLM for intelligent facet learning if available,
+        otherwise falls back to heuristic model.
 
         Args:
             signals: Interaction signals
@@ -171,6 +178,20 @@ class PersonaService:
         Returns:
             Dictionary of facet deltas
         """
+        # Try vLLM-based learning if available
+        if self.slm_client and hasattr(self.slm_client, 'generate_followup_questions'):
+            try:
+                updates = await self._vllm_compute_facet_updates(signals)
+                if updates:
+                    return updates
+            except Exception as e:
+                logger.warning("vllm_facet_learning_failed", error=str(e))
+        
+        # Fallback to heuristic model
+        return self._heuristic_compute_facet_updates(signals)
+    
+    def _heuristic_compute_facet_updates(self, signals: dict[str, Any]) -> dict[str, float]:
+        """Heuristic-based facet update computation (original logic)."""
         updates: dict[str, float] = {}
         learning_rate = self.settings.persona_update_rate
 
@@ -194,3 +215,66 @@ class PersonaService:
             updates[facet] = updates.get(facet, 0.0) + delta * learning_rate
 
         return updates
+    
+    async def _vllm_compute_facet_updates(self, signals: dict[str, Any]) -> dict[str, float] | None:
+        """
+        Use vLLM to intelligently compute facet updates based on signals.
+        
+        Args:
+            signals: Interaction signals
+            
+        Returns:
+            Dictionary of facet deltas or None if failed
+        """
+        import json
+        
+        prompt = f"""Analyze the following user interaction signals and determine how to update their preference facets.
+
+Signals: {json.dumps(signals, indent=2)}
+
+Available facets (range 0.0-1.0):
+- concise: preference for brief vs detailed responses
+- formal: preference for formal vs casual language
+- code_first: preference for code examples vs explanations
+- step_by_step: preference for step-by-step vs high-level guidance
+
+Provide facet adjustments as small deltas (-0.1 to +0.1) in JSON format:
+{{
+  "facet_name": delta_value,
+  ...
+}}
+
+Consider:
+- If they selected hypothesis 1, they may prefer concise
+- If they selected hypothesis 2-3, they may prefer detailed
+- Success signals reinforce current preferences
+- Explicit feedback should have strong impact
+
+JSON Response:"""
+
+        try:
+            # Use the client's chat completion method
+            response = await self.slm_client._chat_completion(
+                prompt=prompt,
+                temperature=0.3,
+                max_tokens=200,
+            )
+            
+            # Parse JSON response
+            updates_raw = json.loads(response.strip())
+            
+            # Apply learning rate and validate
+            learning_rate = self.settings.persona_update_rate
+            updates = {}
+            for facet, delta in updates_raw.items():
+                if facet in self.DEFAULT_FACETS and isinstance(delta, (int, float)):
+                    # Clamp delta to reasonable range
+                    clamped_delta = max(-0.1, min(0.1, float(delta)))
+                    updates[facet] = clamped_delta * learning_rate
+            
+            logger.debug("vllm_facet_updates_computed", updates=updates)
+            return updates
+            
+        except Exception as e:
+            logger.error("vllm_facet_update_error", error=str(e))
+            return None

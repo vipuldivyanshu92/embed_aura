@@ -45,9 +45,29 @@ class Settings(BaseSettings):
     )
 
     # SLM Configuration
-    slm_impl: Literal["local", "http"] = Field(default="local", description="SLM implementation")
+    slm_impl: Literal["local", "http", "vllm"] = Field(default="local", description="SLM implementation")
     slm_base_url: str = Field(default="", description="SLM base URL for HTTP implementation")
     slm_api_key: str = Field(default="", description="SLM API key for HTTP implementation")
+    
+    # vLLM Configuration
+    vllm_base_url: str = Field(
+        default="http://localhost:8000/v1", description="vLLM server base URL"
+    )
+    vllm_model_name: str = Field(
+        default="unsloth/Qwen2.5-3B-Instruct", description="vLLM model name"
+    )
+    vllm_timeout: float = Field(default=30.0, description="vLLM request timeout in seconds")
+    
+    # Training/Fine-tuning Configuration
+    enable_training_data_collection: bool = Field(
+        default=False, description="Enable collection of training data from interactions"
+    )
+    training_data_dir: str = Field(
+        default="./data/training", description="Directory for training data storage"
+    )
+    min_confidence_for_training: float = Field(
+        default=0.7, description="Minimum confidence to include in training data", ge=0.0, le=1.0
+    )
 
     # Embeddings
     embed_dims: int = Field(default=384, description="Embedding dimensions", ge=1)

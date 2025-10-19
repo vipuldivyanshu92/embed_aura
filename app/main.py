@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.clients.slm import HttpSLM, LocalSLM, SLMClient
+from app.clients.slm.vllm import VLLMClient
 from app.config import get_settings
 from app.memory import LocalMemoryProvider, Mem0Provider, MemoryProvider, SupermemoryProvider
 from app.models import (
@@ -29,6 +30,7 @@ from app.services.prompt_builder import PromptBuilder
 from app.services.ranking import RankingService
 from app.services.safety import SafetyService
 from app.services.telemetry import TelemetryService
+from app.services.training import TrainingDataCollector
 from app.utils.embeddings import generate_embedding
 from app.utils.tokens import estimate_tokens
 
@@ -58,13 +60,14 @@ context_budgeter: ContextBudgeter | None = None
 prompt_builder: PromptBuilder | None = None
 hypothesizer_service: HypothesizerService | None = None
 telemetry_service: TelemetryService | None = None
+training_collector: TrainingDataCollector | None = None
 
 
 def _initialize_services() -> None:
     """Initialize all services."""
     global memory_provider, slm_client, persona_service, ranking_service
     global safety_service, context_budgeter, prompt_builder, hypothesizer_service
-    global telemetry_service
+    global telemetry_service, training_collector
 
     settings = get_settings()
 
@@ -100,7 +103,14 @@ def _initialize_services() -> None:
         memory_provider = LocalMemoryProvider()
 
     # Initialize SLM client
-    if settings.slm_impl == "http":
+    if settings.slm_impl == "vllm":
+        slm_client = VLLMClient(
+            base_url=settings.vllm_base_url,
+            model_name=settings.vllm_model_name,
+            timeout=settings.vllm_timeout,
+        )
+        logger.info("vllm_client_initialized", base_url=settings.vllm_base_url)
+    elif settings.slm_impl == "http":
         if not settings.slm_base_url:
             logger.warning(
                 "slm_http_config_missing",
@@ -113,15 +123,16 @@ def _initialize_services() -> None:
         slm_client = LocalSLM()
 
     # Initialize services
-    persona_service = PersonaService(memory_provider)
-    ranking_service = RankingService()
+    training_collector = TrainingDataCollector()
+    persona_service = PersonaService(memory_provider, slm_client if settings.slm_impl == "vllm" else None)
+    ranking_service = RankingService(slm_client if settings.slm_impl == "vllm" else None)
     safety_service = SafetyService()
     context_budgeter = ContextBudgeter(slm_client)
     prompt_builder = PromptBuilder(context_budgeter, safety_service)
     hypothesizer_service = HypothesizerService(slm_client, memory_provider, persona_service)
     telemetry_service = TelemetryService()
 
-    logger.info("application_ready")
+    logger.info("application_ready", training_enabled=settings.enable_training_data_collection)
 
 
 @asynccontextmanager
@@ -131,7 +142,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
     # Cleanup
-    if slm_client and isinstance(slm_client, HttpSLM):
+    if slm_client and isinstance(slm_client, (HttpSLM, VLLMClient)):
         await slm_client.close()
 
     logger.info("application_shutdown")

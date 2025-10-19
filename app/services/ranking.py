@@ -7,6 +7,7 @@ import structlog
 
 from app.config import get_settings
 from app.models import MemoryItem, RankedMemory
+from app.clients.slm.base import SLMClient
 
 logger = structlog.get_logger()
 
@@ -19,14 +20,21 @@ class RankingService:
     Also handles deduplication and conflict resolution.
     """
 
-    def __init__(self) -> None:
-        """Initialize ranking service."""
+    def __init__(self, slm_client: SLMClient | None = None) -> None:
+        """
+        Initialize ranking service.
+        
+        Args:
+            slm_client: Optional SLM client for enhanced scoring (vLLM)
+        """
+        self.slm_client = slm_client
         self.settings = get_settings()
 
-    def rank_memories(
+    async def rank_memories(
         self,
         memories: list[MemoryItem],
         query_embedding: list[float],
+        query_text: str | None = None,
     ) -> list[RankedMemory]:
         """
         Rank memories by relevance score.
@@ -34,6 +42,7 @@ class RankingService:
         Args:
             memories: List of memory items
             query_embedding: Query embedding vector
+            query_text: Optional query text for vLLM-enhanced scoring
 
         Returns:
             List of ranked memories sorted by score (descending)
@@ -76,8 +85,108 @@ class RankingService:
 
         # Sort by total score
         ranked.sort(key=lambda r: r.score, reverse=True)
+        
+        # Apply vLLM-based re-ranking if available and query text provided
+        if self.slm_client and query_text and hasattr(self.slm_client, '_chat_completion'):
+            try:
+                ranked = await self._vllm_rerank(ranked, query_text)
+            except Exception as e:
+                logger.warning("vllm_reranking_failed", error=str(e))
 
         return ranked
+    
+    async def _vllm_rerank(
+        self,
+        ranked_memories: list[RankedMemory],
+        query_text: str,
+        top_k: int = 10,
+    ) -> list[RankedMemory]:
+        """
+        Re-rank top memories using vLLM for semantic relevance.
+        
+        This provides a second-pass ranking that considers semantic
+        relevance beyond simple cosine similarity.
+        
+        Args:
+            ranked_memories: Initially ranked memories
+            query_text: Query text
+            top_k: Number of top memories to re-rank
+            
+        Returns:
+            Re-ranked memories
+        """
+        import json
+        
+        if len(ranked_memories) <= 1:
+            return ranked_memories
+        
+        # Only re-rank top-k to save computation
+        to_rerank = ranked_memories[:top_k]
+        rest = ranked_memories[top_k:]
+        
+        # Build prompt for re-ranking
+        memories_text = []
+        for i, ranked in enumerate(to_rerank):
+            mem = ranked.memory
+            content = mem.content or mem.media_description or "No content"
+            memories_text.append(f"{i}: {content[:200]}")
+        
+        prompt = f"""You are helping rank memories by semantic relevance to a query.
+
+Query: {query_text}
+
+Memories:
+{chr(10).join(memories_text)}
+
+Rank these memories by semantic relevance to the query. Return indices in order of relevance (most relevant first) as a JSON array.
+Only return the JSON array, nothing else.
+
+Example: [2, 0, 4, 1, 3]
+
+JSON Response:"""
+
+        try:
+            response = await self.slm_client._chat_completion(
+                prompt=prompt,
+                temperature=0.2,
+                max_tokens=100,
+            )
+            
+            # Parse the ranking
+            indices = json.loads(response.strip())
+            
+            if not isinstance(indices, list):
+                return ranked_memories
+            
+            # Reorder based on vLLM ranking with boosted scores
+            reranked = []
+            boost_factor = 0.15  # Boost top vLLM picks
+            
+            for rank_pos, idx in enumerate(indices):
+                if isinstance(idx, int) and 0 <= idx < len(to_rerank):
+                    ranked_mem = to_rerank[idx]
+                    # Boost score based on vLLM rank (higher boost for top positions)
+                    boost = boost_factor * (1.0 - rank_pos / len(indices))
+                    ranked_mem.score = min(1.0, ranked_mem.score + boost)
+                    reranked.append(ranked_mem)
+            
+            # Add any memories not in vLLM ranking
+            reranked_indices = set(indices)
+            for i, ranked_mem in enumerate(to_rerank):
+                if i not in reranked_indices:
+                    reranked.append(ranked_mem)
+            
+            # Combine with rest and re-sort
+            all_ranked = reranked + rest
+            all_ranked.sort(key=lambda r: r.score, reverse=True)
+            
+            logger.debug("vllm_reranking_applied", original_top_3=[r.memory.id for r in to_rerank[:3]], reranked_top_3=[r.memory.id for r in all_ranked[:3]])
+            
+            return all_ranked
+            
+        except Exception as e:
+            logger.error("vllm_reranking_error", error=str(e))
+            return ranked_memories
 
     def _compute_cosine(
         self,
