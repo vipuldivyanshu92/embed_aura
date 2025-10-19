@@ -102,11 +102,30 @@ The API will be available at `http://localhost:8000`
 
 Interactive API docs: `http://localhost:8000/docs`
 
-## 🤖 vLLM Integration (Enhanced AI)
+## 🤖 Local AI Integration (Enhanced Performance)
 
-For significantly better hypothesis generation, persona learning, and memory ranking, you can enable vLLM:
+For significantly better hypothesis generation, persona learning, and memory ranking, you can enable local AI:
 
-### Quick Setup
+### For macOS (Recommended: Ollama) 🍎
+
+**Ollama is optimized for Apple Silicon with Metal acceleration:**
+
+```bash
+# 1. Setup Ollama (one-time, ~5 minutes)
+./setup_ollama.sh
+
+# 2. Configure Embed Service
+echo "SLM_IMPL=ollama" >> .env
+echo "OLLAMA_MODEL_NAME=qwen2.5:3b" >> .env
+echo "ENABLE_TRAINING_DATA_COLLECTION=true" >> .env
+
+# 3. Start Embed Service
+make run
+```
+
+### For Linux (vLLM) 🐧
+
+**vLLM is optimized for Linux with CUDA GPUs:**
 
 ```bash
 # 1. Setup vLLM (one-time)
@@ -132,17 +151,23 @@ make run
 - **Training data collection** for continuous improvement
 - **Model fine-tuning** on your specific use cases
 
-### Example
-
-See `example_vllm_usage.py` for a complete demonstration:
+### Examples
 
 ```bash
+# macOS with Ollama
+python example_ollama_usage.py
+
+# Linux with vLLM
 python example_vllm_usage.py
 ```
 
 ### Documentation
 
-- **[VLLM_GUIDE.md](VLLM_GUIDE.md)** - Complete integration guide
+**For macOS Users:**
+- **[OLLAMA_GUIDE.md](OLLAMA_GUIDE.md)** ⭐ Recommended - Complete Ollama guide
+
+**For Linux Users:**
+- **[VLLM_GUIDE.md](VLLM_GUIDE.md)** - Complete vLLM guide
 - **[local-models/README.md](local-models/README.md)** - Quick reference
 
 ## API Endpoints

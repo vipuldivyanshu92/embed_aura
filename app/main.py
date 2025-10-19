@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from app import __version__
 from app.clients.slm import HttpSLM, LocalSLM, SLMClient
 from app.clients.slm.vllm import VLLMClient
+from app.clients.slm.ollama import OllamaClient
 from app.config import get_settings
 from app.memory import LocalMemoryProvider, Mem0Provider, MemoryProvider, SupermemoryProvider
 from app.models import (
@@ -103,7 +104,14 @@ def _initialize_services() -> None:
         memory_provider = LocalMemoryProvider()
 
     # Initialize SLM client
-    if settings.slm_impl == "vllm":
+    if settings.slm_impl == "ollama":
+        slm_client = OllamaClient(
+            base_url=settings.ollama_base_url,
+            model_name=settings.ollama_model_name,
+            timeout=settings.ollama_timeout,
+        )
+        logger.info("ollama_client_initialized", base_url=settings.ollama_base_url, model=settings.ollama_model_name)
+    elif settings.slm_impl == "vllm":
         slm_client = VLLMClient(
             base_url=settings.vllm_base_url,
             model_name=settings.vllm_model_name,
@@ -124,8 +132,10 @@ def _initialize_services() -> None:
 
     # Initialize services
     training_collector = TrainingDataCollector()
-    persona_service = PersonaService(memory_provider, slm_client if settings.slm_impl == "vllm" else None)
-    ranking_service = RankingService(slm_client if settings.slm_impl == "vllm" else None)
+    # Use AI-enhanced services for both Ollama and vLLM
+    use_ai_enhanced = settings.slm_impl in ["ollama", "vllm"]
+    persona_service = PersonaService(memory_provider, slm_client if use_ai_enhanced else None)
+    ranking_service = RankingService(slm_client if use_ai_enhanced else None)
     safety_service = SafetyService()
     context_budgeter = ContextBudgeter(slm_client)
     prompt_builder = PromptBuilder(context_budgeter, safety_service)
@@ -142,7 +152,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
     # Cleanup
-    if slm_client and isinstance(slm_client, (HttpSLM, VLLMClient)):
+    if slm_client and isinstance(slm_client, (HttpSLM, VLLMClient, OllamaClient)):
         await slm_client.close()
 
     logger.info("application_shutdown")

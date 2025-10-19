@@ -45,11 +45,11 @@ class Settings(BaseSettings):
     )
 
     # SLM Configuration
-    slm_impl: Literal["local", "http", "vllm"] = Field(default="local", description="SLM implementation")
+    slm_impl: Literal["local", "http", "vllm", "ollama"] = Field(default="local", description="SLM implementation")
     slm_base_url: str = Field(default="", description="SLM base URL for HTTP implementation")
     slm_api_key: str = Field(default="", description="SLM API key for HTTP implementation")
     
-    # vLLM Configuration
+    # vLLM Configuration (Linux/CUDA only)
     vllm_base_url: str = Field(
         default="http://localhost:8000/v1", description="vLLM server base URL"
     )
@@ -57,6 +57,15 @@ class Settings(BaseSettings):
         default="unsloth/Qwen2.5-3B-Instruct", description="vLLM model name"
     )
     vllm_timeout: float = Field(default=30.0, description="vLLM request timeout in seconds")
+    
+    # Ollama Configuration (macOS/Linux compatible, recommended for Mac)
+    ollama_base_url: str = Field(
+        default="http://localhost:11434", description="Ollama server base URL"
+    )
+    ollama_model_name: str = Field(
+        default="qwen2.5:3b", description="Ollama model name"
+    )
+    ollama_timeout: float = Field(default=60.0, description="Ollama request timeout in seconds")
     
     # Training/Fine-tuning Configuration
     enable_training_data_collection: bool = Field(
