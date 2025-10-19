@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 import structlog
 
-from app.clients.slm.base import SLMClient
+from app.clients.slm.base import GeneratedAnswer, SLMClient
 from app.clients.slm.local import LocalSLM
 from app.models import Hypothesis, MediaType
 
@@ -193,6 +193,41 @@ class HttpSLM(SLMClient):
                 endpoint="describe_media",
             )
             return await self.fallback.describe_media(media_type, media_url, media_base64)
+
+    async def generate_answer(
+        self,
+        prompt: str,
+        response_format: dict[str, Any] | None = None,
+    ) -> GeneratedAnswer:
+        try:
+            client = await self._get_client()
+
+            payload = {
+                "task": "generate_answer",
+                "prompt": prompt,
+                "response_format": response_format,
+            }
+
+            response = await client.post(
+                f"{self.base_url}/v1/generate",
+                json=payload,
+            )
+            response.raise_for_status()
+
+            data = response.json()
+            return GeneratedAnswer(
+                answer=data.get("answer", prompt),
+                supporting_points=data.get("supporting_points", []),
+                confidence=float(data.get("confidence", 0.0)),
+            )
+
+        except (httpx.HTTPError, httpx.TimeoutException, KeyError) as e:
+            logger.warning(
+                "slm_http_answer_failed_fallback_to_local",
+                error=str(e),
+                endpoint="generate_answer",
+            )
+            return await self.fallback.generate_answer(prompt, response_format)
 
     async def close(self) -> None:
         """Close the HTTP client."""

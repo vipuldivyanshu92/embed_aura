@@ -4,7 +4,7 @@ import hashlib
 import re
 from typing import Any
 
-from app.clients.slm.base import SLMClient
+from app.clients.slm.base import GeneratedAnswer, SLMClient
 from app.models import Hypothesis, MediaType
 from app.utils.tokens import estimate_tokens
 
@@ -383,3 +383,90 @@ class LocalSLM(SLMClient):
             "caption": base_caption,
             "tags": tags,
         }
+
+    async def generate_answer(
+        self,
+        prompt: str,
+        response_format: dict[str, Any] | None = None,
+    ) -> GeneratedAnswer:
+        """Produce a simple teacher-style answer using heuristic rules."""
+
+        sections = {
+            "goal": "",
+            "intent": "",
+            "preferences": "",
+            "constraints": "",
+            "artifacts": "",
+            "history": "",
+            "contract": "",
+        }
+
+        current_key = None
+        for raw_line in prompt.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            lowered = line.lower()
+            if lowered.startswith("primary goal:"):
+                current_key = "goal"
+                sections[current_key] = line.split(":", 1)[1].strip()
+                continue
+            if lowered.startswith("selected question") or lowered.startswith("selected question (intent):"):
+                current_key = "intent"
+                sections[current_key] = line.split(":", 1)[1].strip()
+                continue
+            if lowered.startswith("preferences"):
+                current_key = "preferences"
+                sections[current_key] = line.split(":", 1)[1].strip()
+                continue
+            if lowered.startswith("constraints"):
+                current_key = "constraints"
+                sections[current_key] = line.split(":", 1)[1].strip()
+                continue
+            if lowered.startswith("key context"):
+                current_key = "artifacts"
+                sections[current_key] = line.split(":", 1)[1].strip()
+                continue
+            if lowered.startswith("recent history"):
+                current_key = "history"
+                sections[current_key] = line.split(":", 1)[1].strip()
+                continue
+            if lowered.startswith("output contract"):
+                current_key = "contract"
+                sections[current_key] = line.split(":", 1)[1].strip()
+                continue
+
+            if current_key and sections[current_key]:
+                sections[current_key] += f"\n{line}"
+
+        answer_lines = ["### Recommended Guidance"]
+
+        if sections["intent"]:
+            answer_lines.append(f"**Focus:** {sections['intent']}")
+        if sections["goal"]:
+            answer_lines.append(f"**Goal Alignment:** {sections['goal']}")
+        if sections["contract"]:
+            answer_lines.append(f"**Deliverable Expectations:** {sections['contract']}")
+
+        if not sections["intent"] and not sections["goal"]:
+            answer_lines.append("Clarify the user's request and outline next steps based on available context.")
+
+        supporting_points: list[str] = []
+        if sections["artifacts"]:
+            supporting_points.append(f"Artifacts highlight: {sections['artifacts'][:160]}")
+        if sections["history"]:
+            supporting_points.append(f"Recent history: {sections['history'][:160]}")
+        if sections["preferences"]:
+            supporting_points.append(f"Style preferences: {sections['preferences'][:160]}")
+        if sections["constraints"]:
+            supporting_points.append(f"Constraints: {sections['constraints'][:160]}")
+
+        if not supporting_points:
+            supporting_points.append("Use available memories to justify recommendations and cite relevant context explicitly.")
+
+        return GeneratedAnswer(
+            answer="\n\n".join(answer_lines),
+            supporting_points=supporting_points[:4],
+            confidence=0.35,
+        )

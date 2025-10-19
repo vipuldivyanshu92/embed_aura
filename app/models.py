@@ -137,12 +137,36 @@ class ExecuteRequest(BaseModel):
         return self
 
 
-class ExecuteResponse(BaseModel):
-    """Response containing enriched prompt (Phase B)."""
+class UsedMemory(BaseModel):
+    """Memory reference included in the final answer."""
 
+    id: str = Field(..., description="Memory identifier")
+    summary: str = Field(..., description="Short summary of the memory content")
+
+
+class ExecuteResponse(BaseModel):
+    """Response containing enriched answer (Phase B)."""
+
+    answer: str = Field(..., description="Teacher-quality answer or guidance")
+    supporting_points: list[str] = Field(
+        default_factory=list,
+        description="Supporting points extracted from relevant memories",
+    )
+    confidence: float = Field(
+        default=0.0, ge=0.0, le=1.0, description="Aggregate confidence score"
+    )
+    used_memories: list[UsedMemory] = Field(
+        default_factory=list,
+        description="Memories referenced when generating the answer",
+    )
     enriched_prompt: str = Field(..., description="Complete enriched prompt")
     tokens_estimate: int = Field(..., ge=0, description="Estimated token count")
-    context_breakdown: dict[str, int] = Field(..., description="Token breakdown by section")
+    context_breakdown: dict[str, int] = Field(
+        default_factory=dict, description="Token breakdown by section"
+    )
+    telemetry: dict[str, str] = Field(
+        default_factory=dict, description="Telemetry metadata such as request_id"
+    )
 
 
 class RankedMemory(BaseModel):

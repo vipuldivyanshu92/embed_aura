@@ -1,9 +1,17 @@
 """Base interface for Small Language Model clients."""
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, TypedDict
 
 from app.models import Hypothesis, MediaType
+
+
+class GeneratedAnswer(TypedDict):
+    """Structured answer payload returned by SLM clients."""
+
+    answer: str
+    supporting_points: list[str]
+    confidence: float
 
 
 class SLMClient(ABC):
@@ -51,6 +59,15 @@ class SLMClient(ABC):
         Returns:
             Summarized text
         """
+        pass
+
+    @abstractmethod
+    async def generate_answer(
+        self,
+        prompt: str,
+        response_format: dict[str, Any] | None = None,
+    ) -> GeneratedAnswer:
+        """Generate a structured answer from an enriched prompt."""
         pass
 
     @abstractmethod

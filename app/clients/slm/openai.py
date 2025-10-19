@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 import structlog
 
-from app.clients.slm.base import SLMClient
+from app.clients.slm.base import GeneratedAnswer, SLMClient
 from app.clients.slm.local import LocalSLM
 from app.models import Hypothesis, MediaType
 
@@ -186,6 +186,63 @@ class OpenAISLM(SLMClient):
         except Exception as exc:  # noqa: BLE001
             logger.warning("openai_describe_media_failed", error=str(exc))
             return await self.fallback.describe_media(media_type, media_url, media_base64)
+
+    async def generate_answer(
+        self,
+        prompt: str,
+        response_format: dict[str, Any] | None = None,
+    ) -> GeneratedAnswer:
+        messages = [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "You are an expert teacher who provides structured, high-signal answers."
+                            " Return JSON with keys: answer (string), supporting_points (array of strings), confidence (0-1)."
+                        ),
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": prompt,
+                    }
+                ],
+            },
+        ]
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.2,
+            "max_tokens": 900,
+            "response_format": response_format or {"type": "json_object"},
+        }
+
+        try:
+            response = await self._post_chat_completion(payload)
+            data = self._extract_json_content(response)
+            answer = data.get("answer") or prompt
+            supporting = data.get("supporting_points") or []
+            confidence = float(data.get("confidence", 0.0))
+
+            if isinstance(supporting, str):
+                supporting = [supporting]
+
+            return GeneratedAnswer(
+                answer=answer,
+                supporting_points=list(supporting),
+                confidence=max(0.0, min(1.0, confidence)),
+            )
+
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("openai_answer_generation_failed", error=str(exc))
+            return await self.fallback.generate_answer(prompt, response_format)
 
     async def close(self) -> None:
         await self.client.aclose()

@@ -14,32 +14,37 @@ class PromptBuilder:
     Builds enriched prompts from memories, persona, and user input.
     """
 
-    PROMPT_TEMPLATE = """SYSTEM
-You are executing a single task for {user_name}. Follow constraints strictly.
+    PROMPT_TEMPLATE = """You are an expert teacher crafting a guided answer for {user_name}.
 
 Primary goal:
 {goal_summary}
 
-User's immediate request (verbatim):
+User input:
 {user_input}
 
-Disambiguated intent:
+Selected question (intent):
 {selected_hypothesis}
 
-Important preferences & style:
+Preferences & style:
 {preferences_style}
 
-Hard constraints (do not violate):
+Constraints:
 {constraints}
 
-Essential context & artifacts (newest first):
+Key context & artifacts:
 {ranked_artifacts}
 
-Recent outcomes (distilled):
+Recent history:
 {recent_history}
 
 Output contract:
 {output_contract}
+
+Instructions:
+- Provide a clear, teacher-quality answer in markdown.
+- Include 2-4 supporting bullet points referencing relevant memories when available.
+- Return a JSON object with fields: answer (string), supporting_points (array of strings), confidence (0-1).
+- Confidence should reflect how well the context supports your guidance.
 """
 
     def __init__(

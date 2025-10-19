@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 import structlog
 
-from app.clients.slm.base import SLMClient
+from app.clients.slm.base import GeneratedAnswer, SLMClient
 from app.clients.slm.local import LocalSLM
 from app.models import Hypothesis, MediaType
 from app.utils.tokens import estimate_tokens
@@ -455,4 +455,36 @@ Hypotheses:"""
     async def close(self) -> None:
         """Close the HTTP client."""
         await self.client.aclose()
+
+    async def generate_answer(
+        self,
+        prompt: str,
+        response_format: dict[str, Any] | None = None,
+    ) -> GeneratedAnswer:
+        schema_prompt = prompt + "\n\nRespond in JSON with keys: answer (string), supporting_points (array of strings), confidence (0-1)."
+
+        try:
+            response = await self._chat_completion(
+                prompt=schema_prompt,
+                temperature=0.3,
+                max_tokens=900,
+            )
+
+            data = json.loads(response.strip())
+            answer = data.get("answer", prompt)
+            supporting = data.get("supporting_points", [])
+            confidence = float(data.get("confidence", 0.0))
+
+            if isinstance(supporting, str):
+                supporting = [supporting]
+
+            return GeneratedAnswer(
+                answer=answer,
+                supporting_points=list(supporting),
+                confidence=max(0.0, min(1.0, confidence)),
+            )
+
+        except Exception as e:
+            logger.error("vllm_answer_generation_failed", error=str(e))
+            return await LocalSLM().generate_answer(prompt, response_format)
 

@@ -1,7 +1,10 @@
 """Tests for API endpoints."""
 
+import os
 import pytest
 from fastapi.testclient import TestClient
+
+os.environ.setdefault("SUND_AI_SLM_IMPL", "local")
 
 from app.main import app
 

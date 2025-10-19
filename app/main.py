@@ -22,6 +22,7 @@ from app.models import (
     MemoryExport,
     MemoryItem,
     MemoryType,
+    UsedMemory,
 )
 from app.services.context_budgeter import ContextBudgeter
 from app.services.hypothesizer import HypothesizerService
@@ -249,6 +250,7 @@ async def execute(request: ExecuteRequest) -> ExecuteResponse:
             persona_service,
             hypothesizer_service,
             prompt_builder,
+            slm_client,
         ]
     ):
         _initialize_services()
@@ -262,6 +264,7 @@ async def execute(request: ExecuteRequest) -> ExecuteResponse:
             persona_service,
             hypothesizer_service,
             prompt_builder,
+            slm_client,
         ]
     )
 
@@ -292,7 +295,9 @@ async def execute(request: ExecuteRequest) -> ExecuteResponse:
         )
 
         # Rank memories
-        ranked_memories = ranking_service.rank_memories(all_memories, query_embedding)
+        ranked_memories = await ranking_service.rank_memories(
+            all_memories, query_embedding, request.input_text
+        )
 
         # Deduplicate
         ranked_memories = ranking_service.deduplicate(ranked_memories)
@@ -325,6 +330,21 @@ async def execute(request: ExecuteRequest) -> ExecuteResponse:
             ranked_memories,
             persona,
         )
+
+        # Generate structured answer using SLM
+        try:
+            answer_payload = await slm_client.generate_answer(enriched_prompt)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "answer_generation_failed",
+                error=str(exc),
+                request_id=request_id,
+            )
+            answer_payload = {
+                "answer": enriched_prompt,
+                "supporting_points": [],
+                "confidence": 0.0,
+            }
 
         # Estimate tokens
         tokens_estimate = estimate_tokens(enriched_prompt)
@@ -371,10 +391,27 @@ async def execute(request: ExecuteRequest) -> ExecuteResponse:
             memories_used=len(ranked_memories),
         )
 
+        used_memories = [
+            UsedMemory(
+                id=ranked.memory.id,
+                summary=(
+                    ranked.memory.content[:120]
+                    if ranked.memory.content
+                    else (ranked.memory.media_description or "")
+                ),
+            )
+            for ranked in ranked_memories[:10]
+        ]
+
         return ExecuteResponse(
+            answer=answer_payload.get("answer", ""),
+            supporting_points=answer_payload.get("supporting_points", []),
+            confidence=float(answer_payload.get("confidence", 0.0)),
+            used_memories=used_memories,
             enriched_prompt=enriched_prompt,
             tokens_estimate=tokens_estimate,
             context_breakdown=context_breakdown,
+            telemetry={"request_id": request_id},
         )
 
 

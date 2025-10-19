@@ -8,6 +8,9 @@ from app.models import MemoryItem, MemoryType
 from app.services.ranking import RankingService
 
 
+pytestmark = pytest.mark.asyncio
+
+
 @pytest.fixture
 def ranking_service() -> RankingService:
     """Create a ranking service instance."""
@@ -53,33 +56,33 @@ def sample_memories() -> list[MemoryItem]:
     ]
 
 
-def test_rank_memories_by_cosine(
+async def test_rank_memories_by_cosine(
     ranking_service: RankingService, sample_memories: list[MemoryItem]
 ) -> None:
     """Test that memories are ranked by cosine similarity."""
     # Query embedding close to mem1
     query = [1.0, 0.0, 0.0]
 
-    ranked = ranking_service.rank_memories(sample_memories, query)
+    ranked = await ranking_service.rank_memories(sample_memories, query)
 
     # mem1 should be first (perfect match)
     assert ranked[0].memory.id == "mem1"
     assert ranked[0].cosine_score > 0.9
 
 
-def test_rank_memories_empty_list(ranking_service: RankingService) -> None:
+async def test_rank_memories_empty_list(ranking_service: RankingService) -> None:
     """Test ranking with empty memory list."""
-    ranked = ranking_service.rank_memories([], [1.0, 0.0, 0.0])
+    ranked = await ranking_service.rank_memories([], [1.0, 0.0, 0.0])
     assert ranked == []
 
 
-def test_recency_score_decreases_with_age(
+async def test_recency_score_decreases_with_age(
     ranking_service: RankingService, sample_memories: list[MemoryItem]
 ) -> None:
     """Test that recency score decreases with age."""
     query = [0.0, 0.0, 1.0]  # Neutral query
 
-    ranked = ranking_service.rank_memories(sample_memories, query)
+    ranked = await ranking_service.rank_memories(sample_memories, query)
 
     # Find the most recent memory (mem1, 1 day old)
     mem1_ranked = next(r for r in ranked if r.memory.id == "mem1")
@@ -88,11 +91,13 @@ def test_recency_score_decreases_with_age(
     assert mem1_ranked.recency_score > mem3_ranked.recency_score
 
 
-def test_combined_score(ranking_service: RankingService, sample_memories: list[MemoryItem]) -> None:
+async def test_combined_score(
+    ranking_service: RankingService, sample_memories: list[MemoryItem]
+) -> None:
     """Test that combined score is calculated correctly."""
     query = [1.0, 0.0, 0.0]
 
-    ranked = ranking_service.rank_memories(sample_memories, query)
+    ranked = await ranking_service.rank_memories(sample_memories, query)
 
     for r in ranked:
         # Score should be weighted combination
@@ -100,7 +105,7 @@ def test_combined_score(ranking_service: RankingService, sample_memories: list[M
         assert abs(r.score - expected) < 0.001
 
 
-def test_deduplicate_similar_memories(ranking_service: RankingService) -> None:
+async def test_deduplicate_similar_memories(ranking_service: RankingService) -> None:
     """Test deduplication of similar memories."""
     now = datetime.utcnow()
 
@@ -127,7 +132,7 @@ def test_deduplicate_similar_memories(ranking_service: RankingService) -> None:
         ),
     ]
 
-    ranked = ranking_service.rank_memories(memories, [1.0, 0.0, 0.0])
+    ranked = await ranking_service.rank_memories(memories, [1.0, 0.0, 0.0])
     deduped = ranking_service.deduplicate(ranked, threshold=0.95)
 
     # Should keep only one (the higher scored)
@@ -135,7 +140,7 @@ def test_deduplicate_similar_memories(ranking_service: RankingService) -> None:
     assert deduped[0].memory.id == "mem1"
 
 
-def test_resolve_conflicts_by_confidence(ranking_service: RankingService) -> None:
+async def test_resolve_conflicts_by_confidence(ranking_service: RankingService) -> None:
     """Test conflict resolution keeps higher confidence memory."""
     now = datetime.utcnow()
 
@@ -164,7 +169,7 @@ def test_resolve_conflicts_by_confidence(ranking_service: RankingService) -> Non
         ),
     ]
 
-    ranked = ranking_service.rank_memories(memories, [1.0, 0.0, 0.0])
+    ranked = await ranking_service.rank_memories(memories, [1.0, 0.0, 0.0])
     resolved = ranking_service.resolve_conflicts(ranked)
 
     # Should keep the higher confidence one
