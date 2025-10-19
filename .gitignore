@@ -23,6 +23,26 @@ MANIFEST
 InitialPrompt.md
 VLLM_GUIDE.md
 VLLM_SETUP_COMPLETE.md
+HYPOTHESIS_OPTIMIZATION.md
+OPTIMIZATION_COMPLETE.md
+PROJECT_SUMMARY.md
+OLLAMA_GUIDE.md
+OLLAMA_SETUP_COMPLETE.md
+OLLAMA_IMAGE_EMBEDDINGS.md
+OLLAMA_IMAGE_IMPLEMENTATION.md
+MULTI_MODEL_SETUP_COMPLETE.md
+MULTIMODAL_GUIDE.md
+MULTIMODAL_SUMMARY.md
+demo_ollama_usage.py
+demo_optimized_hypotheses.py
+demo_multimodal_usage.py
+demo_multimodal_usage_b.py
+demo_multimodal_usage_b.py
+test_ollama_usage.py
+test_multimodal_usage.py
+test_multimodal_usage_b.py
+test_ollama_usage.py
+example_image_embedding.py
 
 # Virtual environments
 venv/
