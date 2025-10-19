@@ -1,4 +1,4 @@
-# 🚀 Single-Shot Backend Generator
+# 🚀 Model that learns you and generates context so you can Zero-Shot every single time.
 
 A production-ready FastAPI backend service that minimizes user typing through intelligent hypothesis generation and context-aware prompt enrichment.
 
