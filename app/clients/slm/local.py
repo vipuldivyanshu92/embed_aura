@@ -197,18 +197,18 @@ class LocalSLM(SLMClient):
         """Generate hypotheses for image inputs."""
         templates = [
             (
-                "Do you want me to analyze and describe what's in this image?",
-                "Image analysis request",
+                "Is this image a screenshot of a digital workspace or application UI?",
+                "Identify the broad category of the visual interface",
                 0.80,
             ),
             (
-                "Do you want to extract text or specific information from this image?",
-                "OCR or information extraction",
+                "Does the image highlight key panels or sections such as sidebars and message threads?",
+                "Call out notable layout components",
                 0.72,
             ),
             (
-                "Do you want me to answer questions about this image?",
-                "Visual question answering",
+                "Is there notable branding, navigation, or status information visible in the screenshot?",
+                "Surface descriptive details rather than tasks",
                 0.68,
             ),
         ]
@@ -218,8 +218,8 @@ class LocalSLM(SLMClient):
             templates.insert(
                 0,
                 (
-                    f"Do you want help with: {caption[:80]}...?",
-                    "Based on image context",
+                    f"Is the image showing {caption[:80]}...?",
+                    "Summarize the strongest inferred observation",
                     0.85,
                 ),
             )
@@ -349,3 +349,37 @@ class LocalSLM(SLMClient):
                 break
 
         return " ".join(summary_parts) if summary_parts else text[: max_tokens * 4]
+
+    async def describe_media(
+        self,
+        media_type: MediaType,
+        media_url: str | None = None,
+        media_base64: str | None = None,
+    ) -> dict[str, Any]:
+        """Return a deterministic placeholder description for media inputs.
+
+        Provides basic captions and tags so offline operation continues to work
+        when advanced media understanding is unavailable.
+        """
+        base_caption = "Media content provided"
+        tags: list[str] = [f"media:{media_type.value}"]
+
+        if media_type == MediaType.IMAGE:
+            base_caption = "An image was supplied by the user"
+            tags.extend(["image:generic", "image:screenshot_candidate"])
+        elif media_type == MediaType.AUDIO:
+            base_caption = "An audio clip was supplied by the user"
+            tags.append("audio:generic")
+        elif media_type == MediaType.VIDEO:
+            base_caption = "A video clip was supplied by the user"
+            tags.append("video:generic")
+
+        if media_url:
+            tags.append("source:url")
+        elif media_base64:
+            tags.append("source:base64")
+
+        return {
+            "caption": base_caption,
+            "tags": tags,
+        }

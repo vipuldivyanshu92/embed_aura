@@ -45,9 +45,22 @@ class Settings(BaseSettings):
     )
 
     # SLM Configuration
-    slm_impl: Literal["local", "http", "vllm"] = Field(default="local", description="SLM implementation")
+    slm_impl: Literal["openai", "local", "http", "vllm"] = Field(
+        default="openai", description="SLM implementation"
+    )
     slm_base_url: str = Field(default="", description="SLM base URL for HTTP implementation")
     slm_api_key: str = Field(default="", description="SLM API key for HTTP implementation")
+
+    # OpenAI configuration
+    openai_api_key: str = Field(default="", description="OpenAI API key")
+    openai_model: str = Field(
+        default="gpt-4o-mini", description="OpenAI model for text reasoning"
+    )
+    openai_vision_model: str = Field(
+        default="gpt-4o-mini", description="OpenAI model for vision tasks"
+    )
+    openai_base_url: str = Field(default="", description="Optional OpenAI compatible base URL")
+    openai_timeout: float = Field(default=60.0, description="OpenAI request timeout in seconds")
     
     # vLLM Configuration
     vllm_base_url: str = Field(

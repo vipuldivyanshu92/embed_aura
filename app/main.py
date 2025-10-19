@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from app import __version__
-from app.clients.slm import HttpSLM, LocalSLM, SLMClient
+from app.clients.slm import HttpSLM, LocalSLM, OpenAISLM, SLMClient
 from app.clients.slm.vllm import VLLMClient
 from app.config import get_settings
 from app.memory import LocalMemoryProvider, Mem0Provider, MemoryProvider, SupermemoryProvider
@@ -103,7 +103,24 @@ def _initialize_services() -> None:
         memory_provider = LocalMemoryProvider()
 
     # Initialize SLM client
-    if settings.slm_impl == "vllm":
+    if settings.slm_impl == "openai":
+        if not settings.openai_api_key:
+            logger.warning(
+                "openai_config_missing",
+                message="OpenAI selected but API key missing, falling back to local",
+            )
+            slm_client = LocalSLM()
+        else:
+            slm_client = OpenAISLM(
+                api_key=settings.openai_api_key,
+                model=settings.openai_model,
+                vision_model=settings.openai_vision_model,
+                base_url=settings.openai_base_url or None,
+                timeout=settings.openai_timeout,
+            )
+            logger.info("openai_slm_initialized", model=settings.openai_model)
+
+    elif settings.slm_impl == "vllm":
         slm_client = VLLMClient(
             base_url=settings.vllm_base_url,
             model_name=settings.vllm_model_name,

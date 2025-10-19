@@ -7,6 +7,7 @@ import httpx
 import structlog
 
 from app.clients.slm.base import SLMClient
+from app.clients.slm.local import LocalSLM
 from app.models import Hypothesis, MediaType
 from app.utils.tokens import estimate_tokens
 
@@ -65,7 +66,7 @@ class VLLMClient(SLMClient):
         """
         # Build prompt for hypothesis generation
         prompt = self._build_hypothesis_prompt(
-            user_input, context, count, media_type
+            user_input, context, count, media_type, media_url, media_base64
         )
         
         try:
@@ -135,6 +136,17 @@ Summary:"""
             logger.error("vllm_summarization_failed", error=str(e))
             # Fallback to simple truncation
             return text[:max_tokens * 4]
+
+    async def describe_media(
+        self,
+        media_type: MediaType,
+        media_url: str | None = None,
+        media_base64: str | None = None,
+    ) -> dict[str, Any]:
+        """Use the vLLM model to produce media captions and tags when possible."""
+
+        # vLLM does not natively support image understanding. Fallback to local heuristics.
+        return await LocalSLM().describe_media(media_type, media_url, media_base64)
     
     async def enrich_context(
         self,
@@ -257,6 +269,8 @@ Questions:"""
         context: dict[str, Any],
         count: int,
         media_type: MediaType,
+        media_url: str | None,
+        media_base64: str | None,
     ) -> str:
         """Build prompt for hypothesis generation."""
         persona_desc = self._describe_persona(context.get("persona_facets", {}))
@@ -270,9 +284,16 @@ Questions:"""
         
         context_str = "\n".join(context_parts) if context_parts else "No prior context available."
         
-        media_context = ""
+        media_context_lines: list[str] = []
         if media_type != MediaType.TEXT:
-            media_context = f"\nMedia Type: {media_type.value}"
+            media_context_lines.append(f"Media Type: {media_type.value}")
+        if media_url:
+            media_context_lines.append(f"Media URL: {media_url}")
+        elif media_base64:
+            media_context_lines.append("Media provided as base64 payload")
+        media_context = "\n".join(media_context_lines)
+        if media_context:
+            media_context = "\n" + media_context
         
         prompt = f"""You are an AI assistant helping to understand user intent. Generate {count} hypotheses about what the user wants to accomplish.
 

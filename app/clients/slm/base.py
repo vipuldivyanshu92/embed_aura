@@ -52,3 +52,25 @@ class SLMClient(ABC):
             Summarized text
         """
         pass
+
+    @abstractmethod
+    async def describe_media(
+        self,
+        media_type: MediaType,
+        media_url: str | None = None,
+        media_base64: str | None = None,
+    ) -> dict[str, Any]:
+        """Generate a structured description and classification tags for media inputs.
+
+        Args:
+            media_type: Type of media (image, audio, video, etc.)
+            media_url: Optional URL to the media resource
+            media_base64: Optional base64 encoded media payload
+
+        Returns:
+            Dictionary containing keys like ``caption`` and ``tags`` that describe
+            the media content. Implementations should return best-effort results
+            and may fall back to generic placeholders if detailed analysis is
+            unavailable.
+        """
+        pass

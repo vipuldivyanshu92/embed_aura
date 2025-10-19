@@ -31,7 +31,7 @@ class PersonaService:
     }
 
     def __init__(
-        self, 
+        self,
         memory_provider: MemoryProvider,
         slm_client: SLMClient | None = None,
     ) -> None:
@@ -179,7 +179,7 @@ class PersonaService:
             Dictionary of facet deltas
         """
         # Try vLLM-based learning if available
-        if self.slm_client and hasattr(self.slm_client, 'generate_followup_questions'):
+        if self.slm_client and hasattr(self.slm_client, "generate_followup_questions"):
             try:
                 updates = await self._vllm_compute_facet_updates(signals)
                 if updates:

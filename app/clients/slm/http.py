@@ -7,7 +7,7 @@ import structlog
 
 from app.clients.slm.base import SLMClient
 from app.clients.slm.local import LocalSLM
-from app.models import Hypothesis
+from app.models import Hypothesis, MediaType
 
 logger = structlog.get_logger()
 
@@ -48,9 +48,12 @@ class HttpSLM(SLMClient):
 
     async def generate_hypotheses(
         self,
-        user_input: str,
+        user_input: str | None,
         context: dict[str, Any],
         count: int = 3,
+        media_type: MediaType = MediaType.TEXT,
+        media_url: str | None = None,
+        media_base64: str | None = None,
     ) -> list[Hypothesis]:
         """
         Generate hypotheses via HTTP API.
@@ -71,6 +74,11 @@ class HttpSLM(SLMClient):
                 "context": context,
                 "count": count,
                 "task": "hypothesize",
+                "media": {
+                    "type": media_type.value,
+                    "url": media_url,
+                    "base64": media_base64,
+                },
             }
 
             response = await client.post(
@@ -99,7 +107,14 @@ class HttpSLM(SLMClient):
                 endpoint="generate_hypotheses",
             )
             # Fallback to local
-            return await self.fallback.generate_hypotheses(user_input, context, count)
+            return await self.fallback.generate_hypotheses(
+                user_input,
+                context,
+                count,
+                media_type,
+                media_url,
+                media_base64,
+            )
 
     async def summarize(self, text: str, max_tokens: int) -> str:
         """
@@ -138,6 +153,46 @@ class HttpSLM(SLMClient):
             )
             # Fallback to local
             return await self.fallback.summarize(text, max_tokens)
+
+    async def describe_media(
+        self,
+        media_type: MediaType,
+        media_url: str | None = None,
+        media_base64: str | None = None,
+    ) -> dict[str, Any]:
+        """Ask remote SLM service to describe media, with fallback to local heuristics."""
+
+        try:
+            client = await self._get_client()
+
+            payload = {
+                "task": "describe_media",
+                "media": {
+                    "type": media_type.value,
+                    "url": media_url,
+                    "base64": media_base64,
+                },
+            }
+
+            response = await client.post(
+                f"{self.base_url}/v1/generate",
+                json=payload,
+            )
+            response.raise_for_status()
+
+            data = response.json()
+            return {
+                "caption": data.get("caption", "Media content provided"),
+                "tags": data.get("tags", []),
+            }
+
+        except (httpx.HTTPError, httpx.TimeoutException, KeyError) as e:
+            logger.warning(
+                "slm_http_media_description_failed",
+                error=str(e),
+                endpoint="describe_media",
+            )
+            return await self.fallback.describe_media(media_type, media_url, media_base64)
 
     async def close(self) -> None:
         """Close the HTTP client."""
