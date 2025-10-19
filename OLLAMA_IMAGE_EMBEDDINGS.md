@@ -213,6 +213,9 @@ This ensures the system continues working even if Ollama is not available.
 
 ## Troubleshooting
 
+### "this event loop is already running"
+This error has been fixed in the implementation. The image embedding now runs in a separate thread with its own event loop, avoiding conflicts with FastAPI's async context.
+
 ### "Ollama client not available"
 - Ensure Ollama is running: `ollama serve`
 - Check the base URL: `OLLAMA_BASE_URL=http://localhost:11434`
