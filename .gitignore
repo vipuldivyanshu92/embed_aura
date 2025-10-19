@@ -20,6 +20,9 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+InitialPrompt.md
+VLLM_GUIDE.md
+VLLM_SETUP_COMPLETE.md
 
 # Virtual environments
 venv/
