@@ -39,11 +39,13 @@ After the user selects a hypothesis, the system enriches the input into a long, 
 
 ✅ **Pluggable Memory Backends**: Local JSON, Mem0, or Supermemory  
 ✅ **Smart Hypothesis Generation**: 2-3 contextual suggestions per request  
-✅ **vLLM Integration**: Local model serving for enhanced AI capabilities ⭐ **NEW**  
+✅ **AI Integration**: Ollama (macOS) or vLLM (Linux) for enhanced capabilities ⭐ **NEW**  
+✅ **Learning Loop**: Automatic learning from every user interaction ⭐ **NEW**  
 ✅ **Model Fine-Tuning**: Collect data and train models for your specific use case ⭐ **NEW**  
 ✅ **Context Budgeting**: Precise token allocation across memory sections  
-✅ **Persona Learning**: Adaptive user preference tracking (AI-enhanced with vLLM)  
-✅ **Semantic Re-Ranking**: Better memory relevance with vLLM  
+✅ **Persona Learning**: Adaptive user preference tracking (AI-enhanced)  
+✅ **Goal & Preference Extraction**: Automatically learns from hypothesis selections ⭐ **NEW**  
+✅ **Semantic Re-Ranking**: Better memory relevance with AI  
 ✅ **PII Redaction**: Automatic safety filtering  
 ✅ **Offline-First**: Runs completely locally with no external dependencies  
 ✅ **Production-Ready**: Structured logging, type safety, comprehensive tests  
@@ -165,10 +167,14 @@ python example_vllm_usage.py
 
 **For macOS Users:**
 - **[OLLAMA_GUIDE.md](OLLAMA_GUIDE.md)** ⭐ Recommended - Complete Ollama guide
+- **[LEARNING_LOOP.md](LEARNING_LOOP.md)** 🔄 How the system learns from interactions
 
 **For Linux Users:**
 - **[VLLM_GUIDE.md](VLLM_GUIDE.md)** - Complete vLLM guide
 - **[local-models/README.md](local-models/README.md)** - Quick reference
+
+**General:**
+- **[LEARNING_LOOP.md](LEARNING_LOOP.md)** 🔄 Training and continuous improvement
 
 ## API Endpoints
 

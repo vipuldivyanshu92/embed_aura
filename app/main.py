@@ -285,7 +285,7 @@ async def execute(request: ExecuteRequest) -> ExecuteResponse:
         )
 
         # Rank memories
-        ranked_memories = ranking_service.rank_memories(all_memories, query_embedding)
+        ranked_memories = await ranking_service.rank_memories(all_memories, query_embedding)
 
         # Deduplicate
         ranked_memories = ranking_service.deduplicate(ranked_memories)
@@ -329,16 +329,102 @@ async def execute(request: ExecuteRequest) -> ExecuteResponse:
             request_id=request_id,
         )
 
-        # Update persona with learning signal
-        await persona_service.update_persona(
-            request.user_id,
-            {
-                "selected_hypothesis_id": request.hypothesis_id,
-                "embedding": query_embedding,
-            },
-        )
+        # === LEARNING LOOP: Train from user's hypothesis selection ===
+        
+        # 1. Log training data for model improvement
+        if training_collector and get_settings().enable_training_data_collection:
+            # Build context for training data
+            training_context = {
+                "persona_facets": persona.facets,
+                "interaction_count": persona.interaction_count,
+                "recent_goals": [m.content for m in all_memories if m.mtype == MemoryType.GOAL][:3],
+                "preferences": [m.content for m in all_memories if m.mtype == MemoryType.PREFERENCE][:5],
+                "media_type": request.media_type.value,
+            }
+            
+            await training_collector.log_hypothesis_selection(
+                user_id=request.user_id,
+                user_input=request.input_text or f"[{request.media_type.value}]",
+                context=training_context,
+                hypotheses=hypotheses,
+                selected_id=request.hypothesis_id,
+                auto_advanced=False,
+            )
+            logger.debug("training_data_logged", user_id=request.user_id, hypothesis_id=request.hypothesis_id)
+        
+        # 2. Extract and store learned preferences/goals from hypothesis
+        # The hypothesis choice reveals user intent - store it as memory
+        hypothesis_text = selected_hypothesis.question.lower()
+        
+        # Detect if this reveals a goal
+        goal_keywords = ["want to", "need to", "planning to", "trying to", "build", "create", "implement", "deploy"]
+        if any(keyword in hypothesis_text for keyword in goal_keywords):
+            # Extract goal from hypothesis question
+            goal_content = selected_hypothesis.question.replace("Do you ", "").replace("?", "")
+            goal_memory = MemoryItem(
+                id=f"goal_{request_id}",
+                user_id=request.user_id,
+                mtype=MemoryType.GOAL,
+                content=goal_content,
+                media_type=request.media_type,
+                embedding=query_embedding,
+                confidence=selected_hypothesis.confidence,
+                tags=["learned", "hypothesis_derived"],
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+            await memory_provider.store_memory(goal_memory)
+            logger.info("goal_learned_from_hypothesis", user_id=request.user_id, goal=goal_content)
+        
+        # Detect if this reveals a preference
+        preference_keywords = ["prefer", "like", "using", "with", "framework", "language", "tool"]
+        if any(keyword in hypothesis_text for keyword in preference_keywords):
+            # Extract preference indicators
+            pref_content = f"Prefers: {selected_hypothesis.rationale or selected_hypothesis.question}"
+            pref_memory = MemoryItem(
+                id=f"pref_{request_id}",
+                user_id=request.user_id,
+                mtype=MemoryType.PREFERENCE,
+                content=pref_content[:200],
+                media_type=request.media_type,
+                embedding=query_embedding,
+                confidence=selected_hypothesis.confidence * 0.9,  # Slightly lower confidence for inferred prefs
+                tags=["learned", "hypothesis_derived"],
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+            await memory_provider.store_memory(pref_memory)
+            logger.info("preference_learned", user_id=request.user_id)
+        
+        # 3. Update persona with richer learning signals
+        persona_signals = {
+            "selected_hypothesis_id": request.hypothesis_id,
+            "embedding": query_embedding,
+            "success": True,  # Assume successful selection
+        }
+        
+        # Add facet hints based on hypothesis position
+        # h1 = most direct/concise, h2-h3 = more detailed
+        if request.hypothesis_id == "h1":
+            persona_signals["facet_updates"] = {"concise": 0.02}
+        elif request.hypothesis_id in ["h2", "h3"]:
+            persona_signals["facet_updates"] = {"step_by_step": 0.02}
+        
+        # Update persona (AI-enhanced if Ollama/vLLM enabled)
+        old_facets = persona.facets.copy()
+        await persona_service.update_persona(request.user_id, persona_signals)
+        
+        # Log persona update for training
+        if training_collector and get_settings().enable_training_data_collection:
+            updated_persona = await persona_service.get_or_create_persona(request.user_id)
+            await training_collector.log_persona_update(
+                user_id=request.user_id,
+                old_facets=old_facets,
+                new_facets=updated_persona.facets,
+                signals=persona_signals,
+            )
 
-        # Store interaction in history (multi-modal aware)
+        # 4. Store interaction in history (multi-modal aware)
         content_desc = request.input_text[:100] if request.input_text else f"[{request.media_type.value} input]"
         history_memory = MemoryItem(
             id=f"history_{request_id}",
@@ -350,11 +436,18 @@ async def execute(request: ExecuteRequest) -> ExecuteResponse:
             media_description=request.input_text,
             embedding=query_embedding,
             confidence=selected_hypothesis.confidence,
-            tags=["interaction", request.media_type.value],
+            tags=["interaction", request.media_type.value, f"h{request.hypothesis_id}"],
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
         )
         await memory_provider.store_memory(history_memory)
+        
+        logger.info(
+            "learning_loop_complete",
+            user_id=request.user_id,
+            hypothesis_id=request.hypothesis_id,
+            memories_created=2 + (1 if "goal" in locals() else 0) + (1 if "pref" in locals() else 0),
+        )
 
         logger.info(
             "prompt_enriched",
