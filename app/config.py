@@ -66,6 +66,12 @@ class Settings(BaseSettings):
         default="qwen2.5:3b", description="Ollama model name"
     )
     ollama_timeout: float = Field(default=60.0, description="Ollama request timeout in seconds")
+    ollama_vision_model: str = Field(
+        default="llava", description="Ollama vision model for image understanding (llava, llama3.2-vision, minicpm-v)"
+    )
+    ollama_embed_model: str = Field(
+        default="nomic-embed-text", description="Ollama embedding model for text embeddings"
+    )
     
     # Training/Fine-tuning Configuration
     enable_training_data_collection: bool = Field(

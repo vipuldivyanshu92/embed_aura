@@ -84,11 +84,15 @@ def _get_ollama_client() -> Any:
                 "loading_ollama_client",
                 base_url=settings.ollama_base_url,
                 model=settings.ollama_model_name,
+                vision_model=settings.ollama_vision_model,
+                embed_model=settings.ollama_embed_model,
             )
             _ollama_client = OllamaClient(
                 base_url=settings.ollama_base_url,
                 model_name=settings.ollama_model_name,
                 timeout=settings.ollama_timeout,
+                vision_model=settings.ollama_vision_model,
+                embed_model=settings.ollama_embed_model,
             )
             logger.info("ollama_client_loaded")
         except Exception as e:
@@ -193,11 +197,45 @@ def generate_text_embedding(text: str) -> list[float]:
     return _hash_based_embedding(text, settings.embed_dims)
 
 
+async def _generate_image_embedding_ollama(image_data: bytes) -> list[float]:
+    """
+    Generate embedding for image using Ollama (vision + embedding).
+    
+    Args:
+        image_data: Raw image bytes
+        
+    Returns:
+        Embedding vector
+    """
+    ollama_client = _get_ollama_client()
+    if ollama_client is None:
+        raise Exception("Ollama client not available")
+    
+    # Step 1: Use vision model to describe the image
+    description = await ollama_client.generate_image_description(
+        image_data=image_data,
+        prompt="Describe this image in detail, including objects, colors, scene, context, and any text visible.",
+    )
+    
+    # Step 2: Generate embedding from the description
+    embedding = await ollama_client.generate_embedding(text=description)
+    
+    logger.info(
+        "generated_image_embedding",
+        method="ollama",
+        description_length=len(description),
+        embedding_dims=len(embedding),
+    )
+    
+    return embedding
+
+
 def generate_image_embedding(
     image_url: str | None = None, image_base64: str | None = None, description: str | None = None
 ) -> list[float]:
     """
-    Generate embedding for image using CLIP.
+    Generate embedding for image using Ollama (vision model + embeddings).
+    Falls back to CLIP if Ollama is unavailable.
 
     Args:
         image_url: URL to image
@@ -211,12 +249,48 @@ def generate_image_embedding(
 
     # Load image
     image = None
+    image_bytes = None
     if image_url:
         image = _load_image_from_url(image_url)
+        if image is not None:
+            # Convert PIL Image to bytes
+            import io
+            img_byte_arr = io.BytesIO()
+            image.save(img_byte_arr, format='PNG')
+            image_bytes = img_byte_arr.getvalue()
     elif image_base64:
         image = _load_image_from_base64(image_base64)
+        if image is not None:
+            # Convert PIL Image to bytes
+            import io
+            img_byte_arr = io.BytesIO()
+            image.save(img_byte_arr, format='PNG')
+            image_bytes = img_byte_arr.getvalue()
 
-    # Try CLIP image encoder
+    # Try Ollama vision + embedding (preferred method)
+    if image_bytes is not None:
+        ollama_client = _get_ollama_client()
+        if ollama_client is not None:
+            try:
+                # Need to run async function synchronously
+                import asyncio
+                
+                # Get or create event loop
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                embedding = loop.run_until_complete(
+                    _generate_image_embedding_ollama(image_bytes)
+                )
+                return embedding
+            except Exception as e:
+                logger.warning("ollama_image_embedding_failed", error=str(e))
+                # Fall through to CLIP fallback
+
+    # Fallback: Try CLIP image encoder
     if image is not None:
         clip_model, clip_processor = _get_clip_model()
         if clip_model is not None and clip_processor is not None:
@@ -229,7 +303,7 @@ def generate_image_embedding(
 
                 # Normalize
                 image_features = image_features / image_features.norm(dim=-1, keepdim=True)
-                logger.info("generated_image_embedding", method="clip")
+                logger.info("generated_image_embedding", method="clip_fallback")
                 return image_features[0].cpu().numpy().tolist()
             except Exception as e:
                 logger.warning("clip_image_failed", error=str(e))
@@ -240,7 +314,7 @@ def generate_image_embedding(
         return generate_text_embedding(description)
 
     # Last resort: hash-based embedding from URL or metadata
-    fallback_text = image_url or image_base64[:100] or "unknown_image"
+    fallback_text = image_url or (image_base64[:100] if image_base64 else None) or "unknown_image"
     logger.debug("using_hash_based_embedding", type="image")
     return _hash_based_embedding(fallback_text, settings.embed_dims)
 

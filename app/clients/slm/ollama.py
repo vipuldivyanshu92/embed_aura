@@ -36,6 +36,8 @@ class OllamaClient(SLMClient):
         base_url: str = "http://localhost:11434",
         model_name: str = "qwen2.5:3b",
         timeout: float = 60.0,
+        vision_model: str = "llava",
+        embed_model: str = "nomic-embed-text",
     ) -> None:
         """
         Initialize Ollama client.
@@ -44,10 +46,14 @@ class OllamaClient(SLMClient):
             base_url: Base URL for Ollama server
             model_name: Model name to use for inference (e.g., "qwen2.5:3b", "llama3.1:8b")
             timeout: Request timeout in seconds
+            vision_model: Model for vision tasks (e.g., "llava", "llama3.2-vision")
+            embed_model: Model for embeddings (e.g., "nomic-embed-text")
         """
         self.base_url = base_url.rstrip("/")
         self.model_name = model_name
         self.timeout = timeout
+        self.vision_model = vision_model
+        self.embed_model = embed_model
         self.client = httpx.AsyncClient(timeout=timeout)
         
     async def generate_hypotheses(
@@ -559,15 +565,15 @@ Hypotheses:"""
         
         Args:
             text: Text to embed
-            model: Optional embedding model name (defaults to nomic-embed-text)
+            model: Optional embedding model name (defaults to configured embed_model)
             
         Returns:
             Embedding vector
         """
         url = f"{self.base_url}/api/embeddings"
         
-        # Use dedicated embedding model (nomic-embed-text is recommended)
-        embed_model = model or "nomic-embed-text"
+        # Use configured embedding model or override
+        embed_model = model or self.embed_model
         
         payload = {
             "model": embed_model,
@@ -597,16 +603,10 @@ Hypotheses:"""
         """
         Get the vision model name to use.
         
-        Checks if a vision model is available, otherwise uses a default.
-        Common vision models: llava, llama3.2-vision, minicpm-v
-        
         Returns:
             Vision model name
         """
-        # For now, return a sensible default
-        # In production, you might want to check available models first
-        # via GET /api/tags endpoint
-        return "llava"
+        return self.vision_model
     
     async def close(self) -> None:
         """Close the HTTP client."""

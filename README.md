@@ -40,6 +40,7 @@ After the user selects a hypothesis, the system enriches the input into a long, 
 ✅ **Pluggable Memory Backends**: Local JSON, Mem0, or Supermemory  
 ✅ **Smart Hypothesis Generation**: 2-3 contextual suggestions per request  
 ✅ **AI Integration**: Ollama (macOS) or vLLM (Linux) for enhanced capabilities ⭐ **NEW**  
+✅ **Image Understanding**: Vision models generate embeddings from images via Ollama ⭐ **NEW**  
 ✅ **Learning Loop**: Automatic learning from every user interaction ⭐ **NEW**  
 ✅ **Model Fine-Tuning**: Collect data and train models for your specific use case ⭐ **NEW**  
 ✅ **Context Budgeting**: Precise token allocation across memory sections  
@@ -167,6 +168,7 @@ python example_vllm_usage.py
 
 **For macOS Users:**
 - **[OLLAMA_GUIDE.md](OLLAMA_GUIDE.md)** ⭐ Recommended - Complete Ollama guide
+- **[OLLAMA_IMAGE_EMBEDDINGS.md](OLLAMA_IMAGE_EMBEDDINGS.md)** 🖼️ Image embeddings with vision models
 - **[LEARNING_LOOP.md](LEARNING_LOOP.md)** 🔄 How the system learns from interactions
 
 **For Linux Users:**
