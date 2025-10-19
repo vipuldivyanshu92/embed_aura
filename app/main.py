@@ -177,11 +177,17 @@ async def hypothesize(request: HypothesizeRequest) -> HypothesizeResponse:
         request_id,
         "hypothesize",
         user_id=request.user_id,
-        input_length=len(request.input_text),
+        input_length=len(request.input_text or ""),
+        media_type=request.media_type.value,
     ):
-        # Generate hypotheses
+        # Generate hypotheses (multi-modal)
         hypotheses, auto_advance = await hypothesizer_service.generate_hypotheses(
-            request.user_id, request.input_text, count=3
+            user_id=request.user_id,
+            input_text=request.input_text,
+            media_type=request.media_type,
+            media_url=request.media_url,
+            media_base64=request.media_base64,
+            count=3,
         )
 
         # Track for CTR
@@ -242,8 +248,13 @@ async def execute(request: ExecuteRequest) -> ExecuteResponse:
         # Track hypothesis selection
         telemetry_service.track_hypothesis_selected(request.user_id, request.hypothesis_id)
 
-        # Generate query embedding
-        query_embedding = generate_embedding(request.input_text)
+        # Generate query embedding (multi-modal)
+        query_embedding = generate_embedding(
+            text=request.input_text,
+            media_type=request.media_type,
+            media_url=request.media_url,
+            media_base64=request.media_base64,
+        )
 
         # Retrieve memories
         all_memories = await memory_provider.search_memories(
@@ -267,7 +278,12 @@ async def execute(request: ExecuteRequest) -> ExecuteResponse:
         # Find selected hypothesis (reconstruct or use stored)
         # For simplicity, we'll reconstruct it
         hypotheses, _ = await hypothesizer_service.generate_hypotheses(
-            request.user_id, request.input_text, count=3
+            user_id=request.user_id,
+            input_text=request.input_text,
+            media_type=request.media_type,
+            media_url=request.media_url,
+            media_base64=request.media_base64,
+            count=3,
         )
         selected_hypothesis = next(
             (h for h in hypotheses if h.id == request.hypothesis_id), hypotheses[0]
@@ -301,15 +317,19 @@ async def execute(request: ExecuteRequest) -> ExecuteResponse:
             },
         )
 
-        # Store interaction in history
+        # Store interaction in history (multi-modal aware)
+        content_desc = request.input_text[:100] if request.input_text else f"[{request.media_type.value} input]"
         history_memory = MemoryItem(
             id=f"history_{request_id}",
             user_id=request.user_id,
             mtype=MemoryType.HISTORY,
-            content=f"User requested: {request.input_text[:100]}... | Selected: {selected_hypothesis.question[:100]}",
+            content=f"User requested: {content_desc}... | Selected: {selected_hypothesis.question[:100]}",
+            media_type=request.media_type,
+            media_url=request.media_url,
+            media_description=request.input_text,
             embedding=query_embedding,
             confidence=selected_hypothesis.confidence,
-            tags=["interaction"],
+            tags=["interaction", request.media_type.value],
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
         )

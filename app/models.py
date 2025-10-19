@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class MemoryType(str, Enum):
@@ -18,13 +18,27 @@ class MemoryType(str, Enum):
     STYLE = "STYLE"
 
 
+class MediaType(str, Enum):
+    """Enumeration of supported media types for multi-modal input."""
+
+    TEXT = "text"
+    IMAGE = "image"
+    AUDIO = "audio"
+    VIDEO = "video"
+
+
 class MemoryItem(BaseModel):
-    """A single memory item stored in the memory layer."""
+    """A single memory item stored in the memory layer (multi-modal support)."""
 
     id: str = Field(..., description="Unique memory identifier")
     user_id: str = Field(..., description="User identifier")
     mtype: MemoryType = Field(..., description="Memory type")
-    content: str = Field(..., description="Memory content")
+    content: str | None = Field(None, description="Text content")
+    media_type: MediaType = Field(default=MediaType.TEXT, description="Type of media content")
+    media_url: str | None = Field(None, description="URL to media file (image/audio/video)")
+    media_description: str | None = Field(
+        None, description="Text description of media content"
+    )
     embedding: list[float] = Field(..., description="Embedding vector")
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score")
     tags: list[str] = Field(default_factory=list, description="Associated tags")
@@ -76,10 +90,22 @@ class Hypothesis(BaseModel):
 
 
 class HypothesizeRequest(BaseModel):
-    """Request to generate hypotheses (Phase A)."""
+    """Request to generate hypotheses (Phase A) - Multi-modal support."""
 
     user_id: str = Field(..., description="User identifier")
-    input_text: str = Field(..., min_length=1, description="User's short input")
+    input_text: str | None = Field(None, description="User's text input")
+    media_type: MediaType = Field(default=MediaType.TEXT, description="Type of input media")
+    media_url: str | None = Field(None, description="URL to media file (image/audio/video)")
+    media_base64: str | None = Field(
+        None, description="Base64 encoded media data (alternative to URL)"
+    )
+
+    @model_validator(mode="after")
+    def validate_input(self) -> "HypothesizeRequest":
+        """Ensure at least one input is provided."""
+        if not self.input_text and not self.media_url and not self.media_base64:
+            raise ValueError("At least one of input_text, media_url, or media_base64 must be provided")
+        return self
 
 
 class HypothesizeResponse(BaseModel):
@@ -92,11 +118,23 @@ class HypothesizeResponse(BaseModel):
 
 
 class ExecuteRequest(BaseModel):
-    """Request to execute enrichment (Phase B)."""
+    """Request to execute enrichment (Phase B) - Multi-modal support."""
 
     user_id: str = Field(..., description="User identifier")
-    input_text: str = Field(..., min_length=1, description="User's short input")
+    input_text: str | None = Field(None, description="User's text input")
+    media_type: MediaType = Field(default=MediaType.TEXT, description="Type of input media")
+    media_url: str | None = Field(None, description="URL to media file (image/audio/video)")
+    media_base64: str | None = Field(
+        None, description="Base64 encoded media data (alternative to URL)"
+    )
     hypothesis_id: str = Field(..., description="Selected hypothesis ID")
+
+    @model_validator(mode="after")
+    def validate_input(self) -> "ExecuteRequest":
+        """Ensure at least one input is provided."""
+        if not self.input_text and not self.media_url and not self.media_base64:
+            raise ValueError("At least one of input_text, media_url, or media_base64 must be provided")
+        return self
 
 
 class ExecuteResponse(BaseModel):

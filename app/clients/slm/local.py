@@ -5,7 +5,7 @@ import re
 from typing import Any
 
 from app.clients.slm.base import SLMClient
-from app.models import Hypothesis
+from app.models import Hypothesis, MediaType
 from app.utils.tokens import estimate_tokens
 
 
@@ -68,45 +68,62 @@ class LocalSLM(SLMClient):
 
     async def generate_hypotheses(
         self,
-        user_input: str,
+        user_input: str | None,
         context: dict[str, Any],
         count: int = 3,
+        media_type: MediaType = MediaType.TEXT,
+        media_url: str | None = None,
+        media_base64: str | None = None,
     ) -> list[Hypothesis]:
         """
-        Generate hypotheses using pattern matching and context.
+        Generate hypotheses using pattern matching and context (multi-modal support).
 
         Args:
-            user_input: User's input text
+            user_input: User's text input
             context: Context dict with 'persona_facets', 'recent_goals', etc.
             count: Number of hypotheses (max 3)
+            media_type: Type of media (text, image, audio, video)
+            media_url: URL to media file
+            media_base64: Base64 encoded media
 
         Returns:
             List of hypotheses sorted by confidence
         """
-        user_input_lower = user_input.lower()
         hypotheses: list[Hypothesis] = []
 
-        # Try pattern matching
-        matched = False
-        for pattern, topic, clarifications in self.PATTERNS:
-            if re.search(pattern, user_input_lower):
-                matched = True
-                # Generate hypotheses based on pattern
-                for idx, (question, base_conf) in enumerate(clarifications[:count]):
-                    # Adjust confidence based on persona
-                    confidence = self._adjust_confidence(base_conf, context, idx)
-                    hyp = Hypothesis(
-                        id=f"h{idx + 1}",
-                        question=question,
-                        rationale=f"Detected intent: {topic}",
-                        confidence=confidence,
-                    )
-                    hypotheses.append(hyp)
-                break
+        # Handle different media types
+        if media_type == MediaType.IMAGE:
+            hypotheses = self._generate_image_hypotheses(user_input, context, count)
+        elif media_type == MediaType.AUDIO:
+            hypotheses = self._generate_audio_hypotheses(user_input, context, count)
+        elif media_type == MediaType.VIDEO:
+            hypotheses = self._generate_video_hypotheses(user_input, context, count)
+        else:
+            # TEXT - use pattern matching
+            if user_input:
+                user_input_lower = user_input.lower()
+                matched = False
+                for pattern, topic, clarifications in self.PATTERNS:
+                    if re.search(pattern, user_input_lower):
+                        matched = True
+                        # Generate hypotheses based on pattern
+                        for idx, (question, base_conf) in enumerate(clarifications[:count]):
+                            # Adjust confidence based on persona
+                            confidence = self._adjust_confidence(base_conf, context, idx)
+                            hyp = Hypothesis(
+                                id=f"h{idx + 1}",
+                                question=question,
+                                rationale=f"Detected intent: {topic}",
+                                confidence=confidence,
+                            )
+                            hypotheses.append(hyp)
+                        break
 
-        # Fallback: generic hypotheses
-        if not matched:
-            hypotheses = self._generate_generic_hypotheses(user_input, context, count)
+                # Fallback: generic hypotheses
+                if not matched:
+                    hypotheses = self._generate_generic_hypotheses(user_input, context, count)
+            else:
+                hypotheses = self._generate_generic_hypotheses("media content", context, count)
 
         # Sort by confidence and limit to count
         hypotheses.sort(key=lambda h: h.confidence, reverse=True)
@@ -172,6 +189,129 @@ class LocalSLM(SLMClient):
             )
             hypotheses.append(hyp)
 
+        return hypotheses
+
+    def _generate_image_hypotheses(
+        self, caption: str | None, context: dict[str, Any], count: int
+    ) -> list[Hypothesis]:
+        """Generate hypotheses for image inputs."""
+        templates = [
+            (
+                "Do you want me to analyze and describe what's in this image?",
+                "Image analysis request",
+                0.80,
+            ),
+            (
+                "Do you want to extract text or specific information from this image?",
+                "OCR or information extraction",
+                0.72,
+            ),
+            (
+                "Do you want me to answer questions about this image?",
+                "Visual question answering",
+                0.68,
+            ),
+        ]
+
+        # If caption provided, use it for context-aware hypotheses
+        if caption:
+            templates.insert(
+                0,
+                (
+                    f"Do you want help with: {caption[:80]}...?",
+                    "Based on image context",
+                    0.85,
+                ),
+            )
+
+        return self._build_hypotheses_from_templates(templates, context, count)
+
+    def _generate_audio_hypotheses(
+        self, description: str | None, context: dict[str, Any], count: int
+    ) -> list[Hypothesis]:
+        """Generate hypotheses for audio inputs."""
+        templates = [
+            (
+                "Do you want me to transcribe this audio content?",
+                "Speech-to-text transcription",
+                0.82,
+            ),
+            (
+                "Do you want me to summarize what was said in this audio?",
+                "Audio summary request",
+                0.75,
+            ),
+            (
+                "Do you want me to analyze the sentiment or tone of this audio?",
+                "Audio sentiment analysis",
+                0.65,
+            ),
+        ]
+
+        if description:
+            templates.insert(
+                0,
+                (
+                    f"Do you want help with this audio: {description[:80]}...?",
+                    "Based on audio context",
+                    0.85,
+                ),
+            )
+
+        return self._build_hypotheses_from_templates(templates, context, count)
+
+    def _generate_video_hypotheses(
+        self, description: str | None, context: dict[str, Any], count: int
+    ) -> list[Hypothesis]:
+        """Generate hypotheses for video inputs."""
+        templates = [
+            (
+                "Do you want me to summarize the content of this video?",
+                "Video summarization",
+                0.80,
+            ),
+            (
+                "Do you want me to extract key frames or moments from this video?",
+                "Video keyframe extraction",
+                0.72,
+            ),
+            (
+                "Do you want me to transcribe the speech and describe the visuals?",
+                "Video transcription and description",
+                0.68,
+            ),
+        ]
+
+        if description:
+            templates.insert(
+                0,
+                (
+                    f"Do you want help with this video: {description[:80]}...?",
+                    "Based on video context",
+                    0.85,
+                ),
+            )
+
+        return self._build_hypotheses_from_templates(templates, context, count)
+
+    def _build_hypotheses_from_templates(
+        self,
+        templates: list[tuple[str, str, float]],
+        context: dict[str, Any],
+        count: int,
+    ) -> list[Hypothesis]:
+        """Build hypotheses from templates with confidence adjustment."""
+        hypotheses = []
+        for idx in range(min(count, len(templates))):
+            question, rationale, base_conf = templates[idx]
+            confidence = self._adjust_confidence(base_conf, context, idx)
+            hyp = Hypothesis(
+                id=f"h{idx + 1}",
+                question=question,
+                rationale=rationale,
+                confidence=confidence,
+            )
+            hypotheses.append(hyp)
         return hypotheses
 
     async def summarize(self, text: str, max_tokens: int) -> str:

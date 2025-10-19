@@ -7,7 +7,7 @@ import structlog
 from app.clients.slm.base import SLMClient
 from app.config import get_settings
 from app.memory.base import MemoryProvider
-from app.models import Hypothesis, MemoryType
+from app.models import Hypothesis, MediaType, MemoryType
 from app.services.persona import PersonaService
 
 logger = structlog.get_logger()
@@ -38,14 +38,23 @@ class HypothesizerService:
         self.settings = get_settings()
 
     async def generate_hypotheses(
-        self, user_id: str, input_text: str, count: int = 3
+        self,
+        user_id: str,
+        input_text: str | None = None,
+        media_type: MediaType = MediaType.TEXT,
+        media_url: str | None = None,
+        media_base64: str | None = None,
+        count: int = 3,
     ) -> tuple[list[Hypothesis], bool]:
         """
-        Generate hypotheses about user intent.
+        Generate hypotheses about user intent (multi-modal support).
 
         Args:
             user_id: User identifier
-            input_text: User's short input
+            input_text: User's text input
+            media_type: Type of media (text, image, audio, video)
+            media_url: URL to media file
+            media_base64: Base64 encoded media
             count: Number of hypotheses to generate (max 3)
 
         Returns:
@@ -55,10 +64,14 @@ class HypothesizerService:
         count = min(count, 3)
 
         # Get context
-        context = await self._build_context(user_id, input_text)
+        context = await self._build_context(
+            user_id, input_text, media_type, media_url, media_base64
+        )
 
         # Generate hypotheses via SLM
-        hypotheses = await self.slm_client.generate_hypotheses(input_text, context, count)
+        hypotheses = await self.slm_client.generate_hypotheses(
+            input_text, context, count, media_type, media_url, media_base64
+        )
 
         # Check auto-advance threshold
         auto_advance = False
@@ -76,16 +89,26 @@ class HypothesizerService:
 
         return hypotheses, auto_advance
 
-    async def _build_context(self, user_id: str, input_text: str) -> dict[str, Any]:
+    async def _build_context(
+        self,
+        user_id: str,
+        input_text: str | None,
+        media_type: MediaType,
+        media_url: str | None,
+        media_base64: str | None,
+    ) -> dict[str, Any]:
         """
-        Build context for hypothesis generation.
+        Build context for hypothesis generation (multi-modal support).
 
         Retrieves top-K memories of types: GOAL, PREFERENCE, STYLE
         and user persona facets.
 
         Args:
             user_id: User identifier
-            input_text: User's input
+            input_text: User's text input
+            media_type: Type of media
+            media_url: URL to media
+            media_base64: Base64 encoded media
 
         Returns:
             Context dictionary
@@ -103,9 +126,11 @@ class HypothesizerService:
         context = {
             "persona_facets": persona.facets,
             "interaction_count": persona.interaction_count,
-            "recent_goals": [m.content for m in goals],
-            "preferences": [m.content for m in preferences],
-            "styles": [m.content for m in styles],
+            "recent_goals": [m.content or m.media_description for m in goals if m.content or m.media_description],
+            "preferences": [m.content or m.media_description for m in preferences if m.content or m.media_description],
+            "styles": [m.content or m.media_description for m in styles if m.content or m.media_description],
+            "media_type": media_type.value,
+            "has_media": media_url is not None or media_base64 is not None,
         }
 
         return context
