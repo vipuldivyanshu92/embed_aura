@@ -197,20 +197,20 @@ def generate_text_embedding(text: str) -> list[float]:
     return _hash_based_embedding(text, settings.embed_dims)
 
 
-async def _generate_image_embedding_ollama(image_data: bytes) -> list[float]:
+async def _generate_image_embedding_ollama_with_client(
+    image_data: bytes,
+    ollama_client: Any,
+) -> tuple[list[float], str]:
     """
     Generate embedding for image using Ollama (vision + embedding).
     
     Args:
         image_data: Raw image bytes
+        ollama_client: Ollama client instance
         
     Returns:
-        Embedding vector
+        Tuple of (embedding vector, image description from vision model)
     """
-    ollama_client = _get_ollama_client()
-    if ollama_client is None:
-        raise Exception("Ollama client not available")
-    
     # Step 1: Use vision model to describe the image
     description = await ollama_client.generate_image_description(
         image_data=image_data,
@@ -225,98 +225,99 @@ async def _generate_image_embedding_ollama(image_data: bytes) -> list[float]:
         method="ollama",
         description_length=len(description),
         embedding_dims=len(embedding),
+        description=description,
     )
     
-    return embedding
+    return embedding, description
 
 
 def generate_image_embedding(
     image_url: str | None = None, image_base64: str | None = None, description: str | None = None
-) -> list[float]:
+) -> tuple[list[float], str]:
     """
     Generate embedding for image using Ollama (vision model + embeddings).
-    Falls back to CLIP if Ollama is unavailable.
+    Raises error if Ollama is unavailable or fails.
 
     Args:
         image_url: URL to image
         image_base64: Base64 encoded image
-        description: Text description of image (fallback)
+        description: Text description of image (not used, kept for compatibility)
 
     Returns:
-        Embedding vector
+        Tuple of (embedding vector, image description)
+        
+    Raises:
+        ValueError: If image cannot be loaded
+        Exception: If Ollama client is unavailable or embedding generation fails
     """
-    settings = get_settings()
-
     # Load image
     image = None
     image_bytes = None
     if image_url:
         image = _load_image_from_url(image_url)
-        if image is not None:
-            # Convert PIL Image to bytes
-            import io
-            img_byte_arr = io.BytesIO()
-            image.save(img_byte_arr, format='PNG')
-            image_bytes = img_byte_arr.getvalue()
+        if image is None:
+            raise ValueError(f"Failed to load image from URL: {image_url}")
+        # Convert PIL Image to bytes
+        import io
+        img_byte_arr = io.BytesIO()
+        image.save(img_byte_arr, format='PNG')
+        image_bytes = img_byte_arr.getvalue()
     elif image_base64:
         image = _load_image_from_base64(image_base64)
-        if image is not None:
-            # Convert PIL Image to bytes
-            import io
-            img_byte_arr = io.BytesIO()
-            image.save(img_byte_arr, format='PNG')
-            image_bytes = img_byte_arr.getvalue()
+        if image is None:
+            raise ValueError("Failed to load image from base64 data")
+        # Convert PIL Image to bytes
+        import io
+        img_byte_arr = io.BytesIO()
+        image.save(img_byte_arr, format='PNG')
+        image_bytes = img_byte_arr.getvalue()
+    else:
+        raise ValueError("Either image_url or image_base64 must be provided")
 
-    # Try Ollama vision + embedding (preferred method)
-    if image_bytes is not None:
-        ollama_client = _get_ollama_client()
-        if ollama_client is not None:
-            try:
-                # Need to run async function synchronously
-                import asyncio
-                
-                # Get or create event loop
-                try:
-                    loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                
-                embedding = loop.run_until_complete(
-                    _generate_image_embedding_ollama(image_bytes)
-                )
-                return embedding
-            except Exception as e:
-                logger.warning("ollama_image_embedding_failed", error=str(e))
-                # Fall through to CLIP fallback
-
-    # Fallback: Try CLIP image encoder
-    if image is not None:
-        clip_model, clip_processor = _get_clip_model()
-        if clip_model is not None and clip_processor is not None:
-            try:
-                import torch
-
-                inputs = clip_processor(images=image, return_tensors="pt")
-                with torch.no_grad():
-                    image_features = clip_model.get_image_features(**inputs)
-
-                # Normalize
-                image_features = image_features / image_features.norm(dim=-1, keepdim=True)
-                logger.info("generated_image_embedding", method="clip_fallback")
-                return image_features[0].cpu().numpy().tolist()
-            except Exception as e:
-                logger.warning("clip_image_failed", error=str(e))
-
-    # Fallback: use text description if available
-    if description:
-        logger.info("using_description_for_image_embedding")
-        return generate_text_embedding(description)
-
-    # Last resort: hash-based embedding from URL or metadata
-    fallback_text = image_url or (image_base64[:100] if image_base64 else None) or "unknown_image"
-    logger.debug("using_hash_based_embedding", type="image")
-    return _hash_based_embedding(fallback_text, settings.embed_dims)
+    import asyncio
+    import concurrent.futures
+    
+    # Run async function in a separate thread with its own event loop
+    # This avoids "event loop already running" errors when called from FastAPI
+    # We create a fresh Ollama client in the thread to avoid event loop conflicts
+    def run_in_thread():
+        from app.clients.slm.ollama import OllamaClient
+        
+        # Create new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            # Create fresh Ollama client in this thread's event loop
+            settings = get_settings()
+            ollama_client = OllamaClient(
+                base_url=settings.ollama_base_url,
+                model_name=settings.ollama_model_name,
+                timeout=settings.ollama_timeout,
+                vision_model=settings.ollama_vision_model,
+                embed_model=settings.ollama_embed_model,
+            )
+            
+            # Run the async function
+            result = loop.run_until_complete(
+                _generate_image_embedding_ollama_with_client(image_bytes, ollama_client)
+            )
+            
+            # Close the Ollama client
+            loop.run_until_complete(ollama_client.close())
+            
+            return result
+        finally:
+            loop.close()
+    
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future = executor.submit(run_in_thread)
+        try:
+            embedding, img_description = future.result(timeout=120)  # 2 minute timeout
+            return embedding, img_description
+        except Exception as e:
+            logger.error("ollama_image_embedding_failed", error=str(e))
+            raise Exception(f"Failed to generate image embedding with Ollama: {str(e)}") from e
 
 
 def generate_audio_embedding(
@@ -385,7 +386,7 @@ def generate_embedding(
     media_url: str | None = None,
     media_base64: str | None = None,
     media_description: str | None = None,
-) -> list[float]:
+) -> tuple[list[float], str]:
     """
     Generate multi-modal embedding based on input type.
 
@@ -397,14 +398,14 @@ def generate_embedding(
         media_description: Text description of media
 
     Returns:
-        Embedding vector
+        Tuple of (embedding vector, content description)
     """
     try:
         if media_type == MediaType.TEXT:
             if text:
-                return generate_text_embedding(text)
+                return generate_text_embedding(text), text
             elif media_description:
-                return generate_text_embedding(media_description)
+                return generate_text_embedding(media_description), media_description
             else:
                 raise ValueError("Text content required for TEXT media type")
 
@@ -412,10 +413,12 @@ def generate_embedding(
             return generate_image_embedding(media_url, media_base64, media_description or text)
 
         elif media_type == MediaType.AUDIO:
-            return generate_audio_embedding(media_url, media_base64, media_description or text)
+            audio_desc = media_description or text or "Audio content"
+            return generate_audio_embedding(media_url, media_base64, audio_desc), audio_desc
 
         elif media_type == MediaType.VIDEO:
-            return generate_video_embedding(media_url, media_base64, media_description or text)
+            video_desc = media_description or text or "Video content"
+            return generate_video_embedding(media_url, media_base64, video_desc), video_desc
 
         else:
             raise ValueError(f"Unsupported media type: {media_type}")
@@ -425,4 +428,4 @@ def generate_embedding(
         # Emergency fallback
         settings = get_settings()
         fallback_content = text or media_description or media_url or "fallback"
-        return _hash_based_embedding(fallback_content, settings.embed_dims)
+        return _hash_based_embedding(fallback_content, settings.embed_dims), fallback_content

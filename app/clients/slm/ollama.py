@@ -95,6 +95,14 @@ class OllamaClient(SLMClient):
             # Parse response into hypotheses
             hypotheses = self._parse_hypotheses_response(response, count)
             
+            # If parsing failed and returned empty, use fallback
+            if not hypotheses:
+                logger.warning(
+                    "ollama_hypothesis_parsing_returned_empty",
+                    response_preview=response[:200] if response else "None",
+                )
+                return self._fallback_hypotheses(user_input, count)
+            
             logger.info(
                 "ollama_hypotheses_generated",
                 count=len(hypotheses),
@@ -326,12 +334,20 @@ Questions:"""
         if media_type != MediaType.TEXT:
             media_context = f"\nMedia Type: {media_type.value}"
         
+        # Add content description (especially useful for images from vision model)
+        content_desc = ""
+        if context.get("content_description"):
+            if media_type == MediaType.IMAGE:
+                content_desc = f"\n\nImage Description (from vision model):\n{context['content_description']}"
+            else:
+                content_desc = f"\n\nContent Description:\n{context['content_description']}"
+        
         prompt = f"""You are an AI assistant helping to understand user intent. Generate {count} hypotheses about what the user wants to accomplish.
 
 IMPORTANT: Use the user's relevant past context below to generate MORE ACCURATE and PERSONALIZED hypotheses.
 
 User Input: {user_input or "(no text input)"}
-{media_context}
+{media_context}{content_desc}
 
 User Profile:
 {persona_desc}
@@ -439,10 +455,25 @@ Hypotheses:"""
         count: int,
     ) -> list[Hypothesis]:
         """Generate fallback hypotheses if Ollama fails."""
+        # Better fallback questions
+        if user_input:
+            questions = [
+                f"Do you want help with: {user_input}?",
+                f"Would you like me to explain {user_input}?",
+                f"Are you looking for information about {user_input}?",
+            ]
+        else:
+            # When no text input (e.g., image-only)
+            questions = [
+                "What would you like to know about this content?",
+                "Would you like me to analyze or describe this?",
+                "How can I help you with this?",
+            ]
+        
         return [
             Hypothesis(
                 id=f"h{i+1}",
-                question=f"Do you want help with: {user_input or 'your request'}?",
+                question=questions[i % len(questions)],
                 rationale="Fallback hypothesis",
                 confidence=0.6 - (i * 0.1),
             )
@@ -549,6 +580,7 @@ Hypotheses:"""
                 description_length=len(description),
             )
             
+            logger.info(f"Ollama image description: {description}")
             return description
             
         except Exception as e:

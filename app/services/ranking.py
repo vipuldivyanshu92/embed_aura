@@ -194,8 +194,29 @@ JSON Response:"""
         query_norm: float,
         embedding: list[float],
     ) -> float:
-        """Compute cosine similarity."""
+        """
+        Compute cosine similarity.
+        
+        Handles dimension mismatches by padding smaller vectors with zeros.
+        """
         mem_vec = np.array(embedding)
+        
+        # Handle dimension mismatch (e.g., text=384 vs image=768 embeddings)
+        if query_vec.shape[0] != mem_vec.shape[0]:
+            logger.debug(
+                "cosine_dimension_mismatch",
+                query_dims=query_vec.shape[0],
+                mem_dims=mem_vec.shape[0],
+            )
+            
+            # Pad smaller vector with zeros
+            target_dim = max(query_vec.shape[0], mem_vec.shape[0])
+            if query_vec.shape[0] < target_dim:
+                query_vec = np.pad(query_vec, (0, target_dim - query_vec.shape[0]), mode='constant')
+                query_norm = np.linalg.norm(query_vec)
+            if mem_vec.shape[0] < target_dim:
+                mem_vec = np.pad(mem_vec, (0, target_dim - mem_vec.shape[0]), mode='constant')
+        
         mem_norm = np.linalg.norm(mem_vec)
 
         if query_norm > 0 and mem_norm > 0:
@@ -284,9 +305,21 @@ JSON Response:"""
         emb1: list[float],
         emb2: list[float],
     ) -> float:
-        """Compute cosine similarity between two embeddings."""
+        """
+        Compute cosine similarity between two embeddings.
+        
+        Handles dimension mismatches by padding smaller vectors with zeros.
+        """
         vec1 = np.array(emb1)
         vec2 = np.array(emb2)
+
+        # Handle dimension mismatch
+        if vec1.shape[0] != vec2.shape[0]:
+            target_dim = max(vec1.shape[0], vec2.shape[0])
+            if vec1.shape[0] < target_dim:
+                vec1 = np.pad(vec1, (0, target_dim - vec1.shape[0]), mode='constant')
+            if vec2.shape[0] < target_dim:
+                vec2 = np.pad(vec2, (0, target_dim - vec2.shape[0]), mode='constant')
 
         norm1 = np.linalg.norm(vec1)
         norm2 = np.linalg.norm(vec2)

@@ -270,7 +270,7 @@ async def execute(request: ExecuteRequest) -> ExecuteResponse:
         telemetry_service.track_hypothesis_selected(request.user_id, request.hypothesis_id)
 
         # Generate query embedding (multi-modal)
-        query_embedding = generate_embedding(
+        query_embedding, content_description = generate_embedding(
             text=request.input_text,
             media_type=request.media_type,
             media_url=request.media_url,
@@ -306,6 +306,14 @@ async def execute(request: ExecuteRequest) -> ExecuteResponse:
             media_base64=request.media_base64,
             count=3,
         )
+        
+        # Ensure we have hypotheses
+        if not hypotheses:
+            raise HTTPException(
+                status_code=400,
+                detail="No hypotheses could be generated. Please provide valid input."
+            )
+        
         selected_hypothesis = next(
             (h for h in hypotheses if h.id == request.hypothesis_id), hypotheses[0]
         )

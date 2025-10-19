@@ -145,6 +145,8 @@ class PersonaService:
     ) -> list[float]:
         """
         Update persona vector using recency-weighted moving average.
+        
+        Handles dimension mismatches by normalizing embeddings to a common dimension.
 
         Args:
             current_vector: Current persona vector
@@ -156,6 +158,24 @@ class PersonaService:
         """
         current = np.array(current_vector)
         new = np.array(new_embedding)
+
+        # Handle dimension mismatch (e.g., text=384 vs image=768 embeddings)
+        if current.shape[0] != new.shape[0]:
+            logger.warning(
+                "persona_vector_dimension_mismatch",
+                current_dims=current.shape[0],
+                new_dims=new.shape[0],
+                action="normalizing_to_common_dimension",
+            )
+            
+            # Determine target dimension (use the larger one to preserve information)
+            target_dim = max(current.shape[0], new.shape[0])
+            
+            # Pad smaller vectors with zeros
+            if current.shape[0] < target_dim:
+                current = np.pad(current, (0, target_dim - current.shape[0]), mode='constant')
+            if new.shape[0] < target_dim:
+                new = np.pad(new, (0, target_dim - new.shape[0]), mode='constant')
 
         # Recency weight: newer interactions have more weight
         alpha = self.settings.persona_update_rate

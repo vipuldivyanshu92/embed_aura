@@ -118,7 +118,7 @@ class HypothesizerService:
         persona = await self.persona_service.get_or_create_persona(user_id)
 
         # Generate embedding for semantic search
-        query_embedding = generate_embedding(
+        query_embedding, query_description = generate_embedding(
             text=input_text,
             media_type=media_type,
             media_url=media_url,
@@ -188,6 +188,8 @@ class HypothesizerService:
             "media_type": media_type.value,
             "has_media": media_url is not None or media_base64 is not None,
             "total_relevant_memories": len(relevant_memories),
+            # Content description (for images, this is the vision model's description)
+            "content_description": query_description,
         }
 
         logger.debug(
