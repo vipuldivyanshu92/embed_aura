@@ -102,8 +102,17 @@ def _get_ollama_client() -> Any:
     return _ollama_client
 
 
-def _hash_based_embedding(content: str, dims: int = 384) -> list[float]:
+def _hash_based_embedding(content: str, dims: int | None = None) -> list[float]:
     """Generate deterministic hash-based embedding (fallback)."""
+    # Use Ollama dimensions if configured, otherwise use config default
+    if dims is None:
+        settings = get_settings()
+        if settings.slm_impl == "ollama":
+            # Match Ollama's embedding dimensions (nomic-embed-text = 768)
+            dims = 768
+        else:
+            dims = settings.embed_dims
+    
     # Normalize text
     normalized = content.lower().strip()
 
@@ -124,11 +133,28 @@ def _hash_based_embedding(content: str, dims: int = 384) -> list[float]:
 
 
 def _load_image_from_url(url: str) -> Any:
-    """Load image from URL."""
+    """Load image from URL (supports both HTTP/HTTPS and file:// URLs)."""
     try:
-        import requests
         from PIL import Image
-
+        
+        # Handle file:// URLs
+        if url.startswith("file://"):
+            from urllib.parse import unquote, urlparse
+            
+            # Parse and decode the file path
+            parsed = urlparse(url)
+            file_path = unquote(parsed.path)
+            
+            # On Windows, remove leading slash from paths like /C:/...
+            if len(file_path) > 2 and file_path[0] == '/' and file_path[2] == ':':
+                file_path = file_path[1:]
+            
+            image = Image.open(file_path)
+            return image.convert("RGB")
+        
+        # Handle HTTP/HTTPS URLs
+        import requests
+        
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         image = Image.open(io.BytesIO(response.content))
@@ -157,7 +183,7 @@ def _load_image_from_base64(base64_str: str) -> Any:
 
 def generate_text_embedding(text: str) -> list[float]:
     """
-    Generate embedding for text using sentence-transformers or CLIP.
+    Generate embedding for text using Ollama (if configured) or sentence-transformers.
 
     Args:
         text: Input text
@@ -167,7 +193,48 @@ def generate_text_embedding(text: str) -> list[float]:
     """
     settings = get_settings()
 
-    # Try sentence-transformers first (faster for text)
+    # If using Ollama, use its embedding model for consistency
+    if settings.slm_impl == "ollama":
+        try:
+            import asyncio
+            import concurrent.futures
+            
+            def run_in_thread():
+                from app.clients.slm.ollama import OllamaClient
+                
+                # Create new event loop for this thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                try:
+                    # Create fresh Ollama client
+                    ollama_client = OllamaClient(
+                        base_url=settings.ollama_base_url,
+                        model_name=settings.ollama_model_name,
+                        timeout=settings.ollama_timeout,
+                        vision_model=settings.ollama_vision_model,
+                        embed_model=settings.ollama_embed_model,
+                    )
+                    
+                    # Run the async function
+                    result = loop.run_until_complete(ollama_client.generate_embedding(text))
+                    
+                    # Close the Ollama client
+                    loop.run_until_complete(ollama_client.close())
+                    
+                    return result
+                finally:
+                    loop.close()
+            
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(run_in_thread)
+                embedding = future.result(timeout=30)  # 30 second timeout
+                logger.info("generated_text_embedding_ollama", dims=len(embedding))
+                return embedding
+        except Exception as e:
+            logger.warning("ollama_text_embedding_failed", error=str(e))
+
+    # Try sentence-transformers (fallback or non-Ollama)
     model = _get_sentence_transformer()
     if model is not None:
         try:
@@ -194,7 +261,7 @@ def generate_text_embedding(text: str) -> list[float]:
 
     # Fallback to hash-based
     logger.debug("using_hash_based_embedding", type="text")
-    return _hash_based_embedding(text, settings.embed_dims)
+    return _hash_based_embedding(text)
 
 
 async def _generate_image_embedding_ollama_with_client(
@@ -347,7 +414,7 @@ def generate_audio_embedding(
     # Fallback to hash-based
     fallback_text = audio_url or "audio_content"
     logger.debug("using_hash_based_embedding", type="audio")
-    return _hash_based_embedding(fallback_text, settings.embed_dims)
+    return _hash_based_embedding(fallback_text)
 
 
 def generate_video_embedding(
@@ -377,7 +444,7 @@ def generate_video_embedding(
     # Fallback to hash-based
     fallback_text = video_url or "video_content"
     logger.debug("using_hash_based_embedding", type="video")
-    return _hash_based_embedding(fallback_text, settings.embed_dims)
+    return _hash_based_embedding(fallback_text)
 
 
 def generate_embedding(
@@ -425,7 +492,6 @@ def generate_embedding(
 
     except Exception as e:
         logger.error("embedding_generation_failed", media_type=media_type, error=str(e))
-        # Emergency fallback
-        settings = get_settings()
+        # Emergency fallback - uses smart dimension detection
         fallback_content = text or media_description or media_url or "fallback"
-        return _hash_based_embedding(fallback_content, settings.embed_dims), fallback_content
+        return _hash_based_embedding(fallback_content), fallback_content

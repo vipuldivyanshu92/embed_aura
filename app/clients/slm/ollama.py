@@ -399,6 +399,8 @@ Hypotheses:"""
         count: int,
     ) -> list[Hypothesis]:
         """Parse LLM response into Hypothesis objects."""
+        import re
+        
         hypotheses = []
         current_hyp = {}
         
@@ -408,7 +410,9 @@ Hypotheses:"""
         for line in lines:
             line = line.strip()
             
-            if line.startswith("Q:"):
+            # Match both "Q:" and "1. Q:" or "1) Q:" formats
+            q_match = re.match(r'^(?:\d+[\.)]\s*)?Q:\s*(.+)$', line)
+            if q_match:
                 # Save previous hypothesis if exists
                 if current_hyp.get("question"):
                     hypotheses.append(
@@ -421,8 +425,8 @@ Hypotheses:"""
                     )
                     hyp_id += 1
                 
-                # Start new hypothesis
-                current_hyp = {"question": line[2:].strip()}
+                # Start new hypothesis - extract question without prefix
+                current_hyp = {"question": q_match.group(1).strip()}
                 
             elif line.startswith("Confidence:"):
                 try:

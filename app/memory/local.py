@@ -199,10 +199,27 @@ class LocalMemoryProvider(MemoryProvider):
         # Compute cosine similarity
         query_vec = np.array(query_embedding)
         query_norm = np.linalg.norm(query_vec)
+        query_dims = len(query_embedding)
 
         scored_memories = []
+        skipped_count = 0
+        
         for memory in user_memories:
             mem_vec = np.array(memory.embedding)
+            mem_dims = len(memory.embedding)
+            
+            # Skip memories with mismatched dimensions
+            if mem_dims != query_dims:
+                logger.warning(
+                    "embedding_dimension_mismatch",
+                    memory_id=memory.id,
+                    memory_dims=mem_dims,
+                    query_dims=query_dims,
+                    user_id=user_id,
+                )
+                skipped_count += 1
+                continue
+            
             mem_norm = np.linalg.norm(mem_vec)
 
             if query_norm > 0 and mem_norm > 0:
@@ -211,6 +228,14 @@ class LocalMemoryProvider(MemoryProvider):
                 similarity = 0.0
 
             scored_memories.append((similarity, memory))
+
+        if skipped_count > 0:
+            logger.info(
+                "skipped_memories_dimension_mismatch",
+                user_id=user_id,
+                skipped_count=skipped_count,
+                total_memories=len(user_memories),
+            )
 
         # Sort by similarity
         scored_memories.sort(key=lambda x: x[0], reverse=True)
