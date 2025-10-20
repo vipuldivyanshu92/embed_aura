@@ -1,0 +1,12 @@
+idea for sundai hackathon
+
+i  want to make an application that users can download for windows. it will be an upgraded version of the windows snip tool. I want to integrate it with an llm. maybe one of your choice you can add your own api key. Probably you should select the llm you want to use but for now just openai will be an option and we can list a couple compatible models to use.  
+
+I am imagining a tool that after you snip it can use a vision model to predict what you want to do with that snip. maybe you want to ask questions about it or maybe you want to copy and paste it out. 
+
+why?
+snip is old and most of the time you just need to copy paste to an llm. why not just have it prepopulate some optional questions for you and let you chat with the snip if needed. it should also keep a memory for you so if you keep doing the same type of thing and asking the same type of questions those should probably save and show up when relevant again. 
+
+what are you shipping?
+an executable snip replacement
+

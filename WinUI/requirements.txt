@@ -1,0 +1,7 @@
+pillow==10.1.0
+openai>=1.68.2
+mss==9.0.1
+pyperclip==1.8.2
+pywin32>=306
+
+
